@@ -47,8 +47,10 @@
     <Compile Include="Compressor.cs" />
     <Compile Include="Decoder.cs" />
     <Compile Include="Decompresser.cs" />
+    <Compile Include="divsufsort.cs" />
     <Compile Include="Encoder.cs" />
     <Compile Include="LibZPAQ.cs" />
+    <Compile Include="LZBuffer.cs" />
     <Compile Include="PostProcessor.cs" />
     <Compile Include="Predictor.cs" />
     <Compile Include="Reader.cs" />

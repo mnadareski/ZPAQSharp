@@ -171,13 +171,54 @@ namespace ZPAQSharp
 			}
 		}
 
+		// Return a prediction of the next bit in range 0..32767
+		// Use JIT code starting at pcode[0] if available, or else create it.
 		public int predict() // probability that next bit is a 1 (0..4095)
 		{
-			return 0;
+# ifdef NOJIT
+			return predict0();
+#else
+			if (!pcode)
+			{
+				allocx(pcode, pcode_size, (z.cend * 100 + 4096) & -4096);
+				int n = assemble_p();
+				if (n > pcode_size)
+				{
+					allocx(pcode, pcode_size, n);
+					n = assemble_p();
+				}
+				if (!pcode || n < 15 || pcode_size < 15)
+					error("run JIT failed");
+			}
+			assert(pcode && pcode[0]);
+			return ((int(*)(Predictor *)) & pcode[10])(this);
+#endif
 		}
 
+		// Update the model with bit y = 0..1
+		// Use the JIT code starting at pcode[5].
 		public void update(int y) // train on bit y (0..1)
 		{
+# ifdef NOJIT
+			update0(y);
+#else
+			assert(pcode && pcode[5]);
+			((void(*)(Predictor *, int)) & pcode[5])(this, y);
+
+			// Save bit y in c8, hmap4 (not implemented in JIT)
+			c8 += c8 + y;
+			if (c8 >= 256)
+			{
+				z.run(c8 - 256);
+				hmap4 = 1;
+				c8 = 1;
+				for (int i = 0; i < z.header[6]; ++i) h[i] = z.H(i);
+			}
+			else if (c8 >= 16 && c8 < 32)
+				hmap4 = (hmap4 & 0xf) << 5 | y << 4 | 1;
+			else
+				hmap4 = (hmap4 & 0x1f0) | (((hmap4 & 0xf) * 2 + y) & 0xf);
+#endif
 		}
 
 		public int stat(int x) // defined externally
@@ -526,9 +567,792 @@ namespace ZPAQSharp
 		}
 
 		// Put JIT code in pcode
+
+		// Assemble the ZPAQL code in the HCOMP section of z.header to pcomp and
+		// return the number of bytes of x86 or x86-64 code written, or that would
+		// be written if pcomp were large enough. The code for predict() begins
+		// at pr.pcomp[0] and update() at pr.pcomp[5], both as jmp instructions.
+
+		// The assembled code is equivalent to int predict(Predictor*)
+		// and void update(Predictor*, int y); The Preditor address is placed in
+		// edi/rdi. The update bit y is placed in ebp/rbp.
 		private int assemble_p()
 		{
-			return 0;
+			Predictor & pr = *this;
+			U8* rcode = pr.pcode;         // x86 output array
+			int rcode_size = pcode_size;  // output size
+			int o = 0;                    // output index in pcode
+			const int S = sizeof(char*);  // 4 or 8
+			U8* hcomp = &pr.z.header[0];  // The code to translate
+#define off(x)  ((char*)&(pr.x)-(char*)&pr)
+#define offc(x) ((char*)&(pr.comp[i].x)-(char*)&pr)
+
+			// test for little-endian (probably x86)
+			U32 t = 0x12345678;
+			if (*(char*)&t != 0x78 || (S != 4 && S != 8))
+				error("JIT supported only for x86-32 and x86-64");
+
+			// Initialize for predict(). Put predictor address in edi/rdi
+			put1a(0xe9, 5);             // jmp predict
+			put1a(0, 0x90909000);       // reserve space for jmp update
+			put1(0x53);                 // push ebx/rbx
+			put1(0x55);                 // push ebp/rbp
+			put1(0x56);                 // push esi/rsi
+			put1(0x57);                 // push edi/rdi
+			if (S == 4)
+				put4(0x8b7c2414);         // mov edi,[esp+0x14] ; pr
+			else
+			{
+#if !defined(unix) || defined(__CYGWIN__)
+				put3(0x4889cf);           // mov rdi, rcx (1st arg in Win64)
+#endif
+			}
+
+			// Code predict() for each component
+			const int n = hcomp[6];  // number of components
+			U8* cp = hcomp + 7;
+			for (int i = 0; i < n; ++i, cp += compsize[cp[0]])
+			{
+				if (cp - hcomp >= pr.z.cend) error("comp too big");
+				if (cp[0] < 1 || cp[0] > 9) error("invalid component");
+				assert(compsize[cp[0]] > 0 && compsize[cp[0]] < 8);
+				switch (cp[0])
+				{
+
+					case CONS:  // c
+						break;
+
+					case CM:  // sizebits limit
+							  // Component& cr=comp[i];
+							  // cr.cxt=h[i]^hmap4;
+							  // p[i]=stretch(cr.cm(cr.cxt)>>17);
+
+						put2a(0x8b87, off(h[i]));              // mov eax, [edi+&h[i]]
+						put2a(0x3387, off(hmap4));             // xor eax, [edi+&hmap4]
+						put1a(0x25, (1 << cp[1]) - 1);             // and eax, size-1
+						put2a(0x8987, offc(cxt));              // mov [edi+cxt], eax
+						if (S == 8) put1(0x48);                  // rex.w (esi->rsi)
+						put2a(0x8bb7, offc(cm));               // mov esi, [edi+&cm]
+						put3(0x8b0486);                        // mov eax, [esi+eax*4]
+						put3(0xc1e811);                        // shr eax, 17
+						put4a(0x0fbf8447, off(stretcht));      // movsx eax,word[edi+eax*2+..]
+						put2a(0x8987, off(p[i]));              // mov [edi+&p[i]], eax
+						break;
+
+					case ISSE:  // sizebits j -- c=hi, cxt=bh
+								// assert((hmap4&15)>0);
+								// if (c8==1 || (c8&0xf0)==16)
+								//   cr.c=find(cr.ht, cp[1]+2, h[i]+16*c8);
+								// cr.cxt=cr.ht[cr.c+(hmap4&15)];  // bit history
+								// int *wt=(int*)&cr.cm[cr.cxt*2];
+								// p[i]=clamp2k((wt[0]*p[cp[2]]+wt[1]*64)>>16);
+
+					case ICM: // sizebits
+							  // assert((hmap4&15)>0);
+							  // if (c8==1 || (c8&0xf0)==16) cr.c=find(cr.ht, cp[1]+2, h[i]+16*c8);
+							  // cr.cxt=cr.ht[cr.c+(hmap4&15)];
+							  // p[i]=stretch(cr.cm(cr.cxt)>>8);
+							  //
+							  // Find cxt row in hash table ht. ht has rows of 16 indexed by the low
+							  // sizebits of cxt with element 0 having the next higher 8 bits for
+							  // collision detection. If not found after 3 adjacent tries, replace
+							  // row with lowest element 1 as priority. Return index of row.
+							  //
+							  // size_t Predictor::find(Array<U8>& ht, int sizebits, U32 cxt) {
+							  //  assert(ht.size()==size_t(16)<<sizebits);
+							  //  int chk=cxt>>sizebits&255;
+							  //  size_t h0=(cxt*16)&(ht.size()-16);
+							  //  if (ht[h0]==chk) return h0;
+							  //  size_t h1=h0^16;
+							  //  if (ht[h1]==chk) return h1;
+							  //  size_t h2=h0^32;
+							  //  if (ht[h2]==chk) return h2;
+							  //  if (ht[h0+1]<=ht[h1+1] && ht[h0+1]<=ht[h2+1])
+							  //    return memset(&ht[h0], 0, 16), ht[h0]=chk, h0;
+							  //  else if (ht[h1+1]<ht[h2+1])
+							  //    return memset(&ht[h1], 0, 16), ht[h1]=chk, h1;
+							  //  else
+							  //    return memset(&ht[h2], 0, 16), ht[h2]=chk, h2;
+							  // }
+
+						if (S == 8) put1(0x48);                  // rex.w
+						put2a(0x8bb7, offc(ht));               // mov esi, [edi+&ht]
+						put2(0x8b07);                          // mov eax, edi ; c8
+						put2(0x89c1);                          // mov ecx, eax ; c8
+						put3(0x83f801);                        // cmp eax, 1
+						put2(0x740a);                          // je L1
+						put1a(0x25, 240);                      // and eax, 0xf0
+						put3(0x83f810);                        // cmp eax, 16
+						put2(0x7576);                          // jne L2 ; skip find()
+															   // L1: ; find cxt in ht, return index in eax
+						put3(0xc1e104);                        // shl ecx, 4
+						put2a(0x038f, off(h[i]));              // add [edi+&h[i]]
+						put2(0x89c8);                          // mov eax, ecx ; cxt
+						put3(0xc1e902 + cp[1]);                  // shr ecx, sizebits+2
+						put2a(0x81e1, 255);                    // and eax, 255 ; chk
+						put3(0xc1e004);                        // shl eax, 4
+						put1a(0x25, (64 << cp[1]) - 16);           // and eax, ht.size()-16 = h0
+						put3(0x3a0c06);                        // cmp cl, [esi+eax] ; ht[h0]
+						put2(0x744d);                          // je L3 ; match h0
+						put3(0x83f010);                        // xor eax, 16 ; h1
+						put3(0x3a0c06);                        // cmp cl, [esi+eax]
+						put2(0x7445);                          // je L3 ; match h1
+						put3(0x83f030);                        // xor eax, 48 ; h2
+						put3(0x3a0c06);                        // cmp cl, [esi+eax]
+						put2(0x743d);                          // je L3 ; match h2
+															   // No checksum match, so replace the lowest priority among h0,h1,h2
+						put3(0x83f021);                        // xor eax, 33 ; h0+1
+						put3(0x8a1c06);                        // mov bl, [esi+eax] ; ht[h0+1]
+						put2(0x89c2);                          // mov edx, eax ; h0+1
+						put3(0x83f220);                        // xor edx, 32  ; h2+1
+						put3(0x3a1c16);                        // cmp bl, [esi+edx]
+						put2(0x7708);                          // ja L4 ; test h1 vs h2
+						put3(0x83f230);                        // xor edx, 48  ; h1+1
+						put3(0x3a1c16);                        // cmp bl, [esi+edx]
+						put2(0x7611);                          // jbe L7 ; replace h0
+															   // L4: ; h0 is not lowest, so replace h1 or h2
+						put3(0x83f010);                        // xor eax, 16 ; h1+1
+						put3(0x8a1c06);                        // mov bl, [esi+eax]
+						put3(0x83f030);                        // xor eax, 48 ; h2+1
+						put3(0x3a1c06);                        // cmp bl, [esi+eax]
+						put2(0x7303);                          // jae L7
+						put3(0x83f030);                        // xor eax, 48 ; h1+1
+															   // L7: ; replace row pointed to by eax = h0,h1,h2
+						put3(0x83f001);                        // xor eax, 1
+						put3(0x890c06);                        // mov [esi+eax], ecx ; chk
+						put2(0x31c9);                          // xor ecx, ecx
+						put4(0x894c0604);                      // mov [esi+eax+4], ecx
+						put4(0x894c0608);                      // mov [esi+eax+8], ecx
+						put4(0x894c060c);                      // mov [esi+eax+12], ecx
+															   // L3: ; save nibble context (in eax) in c
+						put2a(0x8987, offc(c));                // mov [edi+c], eax
+						put2(0xeb06);                          // jmp L8
+															   // L2: ; get nibble context
+						put2a(0x8b87, offc(c));                // mov eax, [edi+c]
+															   // L8: ; nibble context is in eax
+						put2a(0x8b97, off(hmap4));             // mov edx, [edi+&hmap4]
+						put3(0x83e20f);                        // and edx, 15  ; hmap4
+						put2(0x01d0);                          // add eax, edx ; c+(hmap4&15)
+						put4(0x0fb61406);                      // movzx edx, byte [esi+eax]
+						put2a(0x8997, offc(cxt));              // mov [edi+&cxt], edx ; cxt=bh
+						if (S == 8) put1(0x48);                  // rex.w
+						put2a(0x8bb7, offc(cm));               // mov esi, [edi+&cm] ; cm
+
+						// esi points to cm[256] (ICM) or cm[512] (ISSE) with 23 bit
+						// prediction (ICM) or a pair of 20 bit signed weights (ISSE).
+						// cxt = bit history bh (0..255) is in edx.
+						if (cp[0] == ICM)
+						{
+							put3(0x8b0496);                      // mov eax, [esi+edx*4];cm[bh]
+							put3(0xc1e808);                      // shr eax, 8
+							put4a(0x0fbf8447, off(stretcht));    // movsx eax,word[edi+eax*2+..]
+						}
+						else
+						{  // ISSE
+							put2a(0x8b87, off(p[cp[2]]));        // mov eax, [edi+&p[j]]
+							put4(0x0faf04d6);                    // imul eax, [esi+edx*8] ;wt[0]
+							put4(0x8b4cd604);                    // mov ecx, [esi+edx*8+4];wt[1]
+							put3(0xc1e106);                      // shl ecx, 6
+							put2(0x01c8);                        // add eax, ecx
+							put3(0xc1f810);                      // sar eax, 16
+							put1a(0xb9, 2047);                   // mov ecx, 2047
+							put2(0x39c8);                        // cmp eax, ecx
+							put3(0x0f4fc1);                      // cmovg eax, ecx
+							put1a(0xb9, -2048);                  // mov ecx, -2048
+							put2(0x39c8);                        // cmp eax, ecx
+							put3(0x0f4cc1);                      // cmovl eax, ecx
+
+						}
+						put2a(0x8987, off(p[i]));              // mov [edi+&p[i]], eax
+						break;
+
+					case MATCH: // sizebits bufbits: a=len, b=offset, c=bit, cxt=bitpos,
+								//                   ht=buf, limit=pos
+								// assert(cr.cm.size()==(size_t(1)<<cp[1]));
+								// assert(cr.ht.size()==(size_t(1)<<cp[2]));
+								// assert(cr.a<=255);
+								// assert(cr.c==0 || cr.c==1);
+								// assert(cr.cxt<8);
+								// assert(cr.limit<cr.ht.size());
+								// if (cr.a==0) p[i]=0;
+								// else {
+								//   cr.c=(cr.ht(cr.limit-cr.b)>>(7-cr.cxt))&1; // predicted bit
+								//   p[i]=stretch(dt2k[cr.a]*(cr.c*-2+1)&32767);
+								// }
+
+						if (S == 8) put1(0x48);          // rex.w
+						put2a(0x8bb7, offc(ht));       // mov esi, [edi+&ht]
+
+						// If match length (a) is 0 then p[i]=0
+						put2a(0x8b87, offc(a));        // mov eax, [edi+&a]
+						put2(0x85c0);                  // test eax, eax
+						put2(0x7449);                  // jz L2 ; p[i]=0
+
+						// Else put predicted bit in c
+						put1a(0xb9, 7);                // mov ecx, 7
+						put2a(0x2b8f, offc(cxt));      // sub ecx, [edi+&cxt]
+						put2a(0x8b87, offc(limit));    // mov eax, [edi+&limit]
+						put2a(0x2b87, offc(b));        // sub eax, [edi+&b]
+						put1a(0x25, (1 << cp[2]) - 1);     // and eax, ht.size()-1
+						put4(0x0fb60406);              // movzx eax, byte [esi+eax]
+						put2(0xd3e8);                  // shr eax, cl
+						put3(0x83e001);                // and eax, 1  ; predicted bit
+						put2a(0x8987, offc(c));        // mov [edi+&c], eax ; c
+
+						// p[i]=stretch(dt2k[cr.a]*(cr.c*-2+1)&32767);
+						put2a(0x8b87, offc(a));        // mov eax, [edi+&a]
+						put3a(0x8b8487, off(dt2k));    // mov eax, [edi+eax*4+&dt2k] ; weight
+						put2(0x7402);                  // jz L1 ; z if c==0
+						put2(0xf7d8);                  // neg eax
+						put1a(0x25, 0x7fff);           // L1: and eax, 32767
+						put4a(0x0fbf8447, off(stretcht)); //movsx eax, word [edi+eax*2+...]
+						put2a(0x8987, off(p[i]));      // L2: mov [edi+&p[i]], eax
+						break;
+
+					case AVG: // j k wt
+							  // p[i]=(p[cp[1]]*cp[3]+p[cp[2]]*(256-cp[3]))>>8;
+
+						put2a(0x8b87, off(p[cp[1]]));  // mov eax, [edi+&p[j]]
+						put2a(0x2b87, off(p[cp[2]]));  // sub eax, [edi+&p[k]]
+						put2a(0x69c0, cp[3]);          // imul eax, wt
+						put3(0xc1f808);                // sar eax, 8
+						put2a(0x0387, off(p[cp[2]]));  // add eax, [edi+&p[k]]
+						put2a(0x8987, off(p[i]));      // mov [edi+&p[i]], eax
+						break;
+
+					case MIX2:   // sizebits j k rate mask
+								 // c=size cm=wt[size] cxt=input
+								 // cr.cxt=((h[i]+(c8&cp[5]))&(cr.c-1));
+								 // assert(cr.cxt<cr.a16.size());
+								 // int w=cr.a16[cr.cxt];
+								 // assert(w>=0 && w<65536);
+								 // p[i]=(w*p[cp[2]]+(65536-w)*p[cp[3]])>>16;
+								 // assert(p[i]>=-2048 && p[i]<2048);
+
+						put2(0x8b07);                  // mov eax, [edi] ; c8
+						put1a(0x25, cp[5]);            // and eax, mask
+						put2a(0x0387, off(h[i]));      // add eax, [edi+&h[i]]
+						put1a(0x25, (1 << cp[1]) - 1);     // and eax, size-1
+						put2a(0x8987, offc(cxt));      // mov [edi+&cxt], eax ; cxt
+						if (S == 8) put1(0x48);          // rex.w
+						put2a(0x8bb7, offc(a16));      // mov esi, [edi+&a16]
+						put4(0x0fb70446);              // movzx eax, word [edi+eax*2] ; w
+						put2a(0x8b8f, off(p[cp[2]]));  // mov ecx, [edi+&p[j]]
+						put2a(0x8b97, off(p[cp[3]]));  // mov edx, [edi+&p[k]]
+						put2(0x29d1);                  // sub ecx, edx
+						put3(0x0fafc8);                // imul ecx, eax
+						put3(0xc1e210);                // shl edx, 16
+						put2(0x01d1);                  // add ecx, edx
+						put3(0xc1f910);                // sar ecx, 16
+						put2a(0x898f, off(p[i]));      // mov [edi+&p[i]]
+						break;
+
+					case MIX:    // sizebits j m rate mask
+								 // c=size cm=wt[size][m] cxt=index of wt in cm
+								 // int m=cp[3];
+								 // assert(m>=1 && m<=i);
+								 // cr.cxt=h[i]+(c8&cp[5]);
+								 // cr.cxt=(cr.cxt&(cr.c-1))*m; // pointer to row of weights
+								 // assert(cr.cxt<=cr.cm.size()-m);
+								 // int* wt=(int*)&cr.cm[cr.cxt];
+								 // p[i]=0;
+								 // for (int j=0; j<m; ++j)
+								 //   p[i]+=(wt[j]>>8)*p[cp[2]+j];
+								 // p[i]=clamp2k(p[i]>>8);
+
+						put2(0x8b07);                          // mov eax, [edi] ; c8
+						put1a(0x25, cp[5]);                    // and eax, mask
+						put2a(0x0387, off(h[i]));              // add eax, [edi+&h[i]]
+						put1a(0x25, (1 << cp[1]) - 1);             // and eax, size-1
+						put2a(0x69c0, cp[3]);                  // imul eax, m
+						put2a(0x8987, offc(cxt));              // mov [edi+&cxt], eax ; cxt
+						if (S == 8) put1(0x48);                  // rex.w
+						put2a(0x8bb7, offc(cm));               // mov esi, [edi+&cm]
+						if (S == 8) put1(0x48);                  // rex.w
+						put3(0x8d3486);                        // lea esi, [esi+eax*4] ; wt
+
+						// Unroll summation loop: esi=wt[0..m-1]
+						for (int k = 0; k < cp[3]; k += 8)
+						{
+							const int tail = cp[3] - k;  // number of elements remaining
+
+							// pack 8 elements of wt in xmm1, 8 elements of p in xmm3
+							put4a(0xf30f6f8e, k * 4);              // movdqu xmm1, [esi+k*4]
+							if (tail > 3) put4a(0xf30f6f96, k * 4 + 16);//movdqu xmm2, [esi+k*4+16]
+							put5(0x660f72e1, 0x08);               // psrad xmm1, 8
+							if (tail > 3) put5(0x660f72e2, 0x08);   // psrad xmm2, 8
+							put4(0x660f6bca);                    // packssdw xmm1, xmm2
+							put4a(0xf30f6f9f, off(p[cp[2] + k]));  // movdqu xmm3, [edi+&p[j+k]]
+							if (tail > 3)
+								put4a(0xf30f6fa7, off(p[cp[2] + k + 4]));//movdqu xmm4, [edi+&p[j+k+4]]
+							put4(0x660f6bdc);                    // packssdw, xmm3, xmm4
+							if (tail > 0 && tail < 8)
+							{  // last loop, mask extra weights
+								put4(0x660f76ed);                  // pcmpeqd xmm5, xmm5 ; -1
+								put5(0x660f73dd, 16 - tail * 2);       // psrldq xmm5, 16-tail*2
+								put4(0x660fdbcd);                  // pand xmm1, xmm5
+							}
+							if (k == 0)
+							{  // first loop, initialize sum in xmm0
+								put4(0xf30f6fc1);                  // movdqu xmm0, xmm1
+								put4(0x660ff5c3);                  // pmaddwd xmm0, xmm3
+							}
+							else
+							{  // accumulate sum in xmm0
+								put4(0x660ff5cb);                  // pmaddwd xmm1, xmm3
+								put4(0x660ffec1);                  // paddd xmm0, xmm1
+							}
+						}
+
+						// Add up the 4 elements of xmm0 = p[i] in the first element
+						put4(0xf30f6fc8);                      // movdqu xmm1, xmm0
+						put5(0x660f73d9, 0x08);                 // psrldq xmm1, 8
+						put4(0x660ffec1);                      // paddd xmm0, xmm1
+						put4(0xf30f6fc8);                      // movdqu xmm1, xmm0
+						put5(0x660f73d9, 0x04);                 // psrldq xmm1, 4
+						put4(0x660ffec1);                      // paddd xmm0, xmm1
+						put4(0x660f7ec0);                      // movd eax, xmm0 ; p[i]
+						put3(0xc1f808);                        // sar eax, 8
+						put1a(0x3d, 2047);                     // cmp eax, 2047
+						put2(0x7e05);                          // jle L1
+						put1a(0xb8, 2047);                     // mov eax, 2047
+						put1a(0x3d, -2048);                    // L1: cmp eax, -2048
+						put2(0x7d05);                          // jge, L2
+						put1a(0xb8, -2048);                    // mov eax, -2048
+						put2a(0x8987, off(p[i]));              // L2: mov [edi+&p[i]], eax
+						break;
+
+					case SSE:  // sizebits j start limit
+							   // cr.cxt=(h[i]+c8)*32;
+							   // int pq=p[cp[2]]+992;
+							   // if (pq<0) pq=0;
+							   // if (pq>1983) pq=1983;
+							   // int wt=pq&63;
+							   // pq>>=6;
+							   // assert(pq>=0 && pq<=30);
+							   // cr.cxt+=pq;
+							   // p[i]=stretch(((cr.cm(cr.cxt)>>10)*(64-wt)       // p0
+							   //               +(cr.cm(cr.cxt+1)>>10)*wt)>>13);  // p1
+							   // // p = p0*(64-wt)+p1*wt = (p1-p0)*wt + p0*64
+							   // cr.cxt+=wt>>5;
+
+						put2a(0x8b8f, off(h[i]));      // mov ecx, [edi+&h[i]]
+						put2(0x030f);                  // add ecx, [edi]  ; c0
+						put2a(0x81e1, (1 << cp[1]) - 1);   // and ecx, size-1
+						put3(0xc1e105);                // shl ecx, 5  ; cxt in 0..size*32-32
+						put2a(0x8b87, off(p[cp[2]]));  // mov eax, [edi+&p[j]] ; pq
+						put1a(0x05, 992);              // add eax, 992
+						put2(0x31d2);                  // xor edx, edx ; 0
+						put2(0x39d0);                  // cmp eax, edx
+						put3(0x0f4cc2);                // cmovl eax, edx
+						put1a(0xba, 1983);             // mov edx, 1983
+						put2(0x39d0);                  // cmp eax, edx
+						put3(0x0f4fc2);                // cmovg eax, edx ; pq in 0..1983
+						put2(0x89c2);                  // mov edx, eax
+						put3(0x83e23f);                // and edx, 63  ; wt in 0..63
+						put3(0xc1e806);                // shr eax, 6   ; pq in 0..30
+						put2(0x01c1);                  // add ecx, eax ; cxt in 0..size*32-2
+						if (S == 8) put1(0x48);          // rex.w
+						put2a(0x8bb7, offc(cm));       // mov esi, [edi+cm]
+						put3(0x8b048e);                // mov eax, [esi+ecx*4] ; cm[cxt]
+						put4(0x8b5c8e04);              // mov ebx, [esi+ecx*4+4] ; cm[cxt+1]
+						put3(0x83fa20);                // cmp edx, 32  ; wt
+						put3(0x83d9ff);                // sbb ecx, -1  ; cxt+=wt>>5
+						put2a(0x898f, offc(cxt));      // mov [edi+cxt], ecx  ; cxt saved
+						put3(0xc1e80a);                // shr eax, 10 ; p0 = cm[cxt]>>10
+						put3(0xc1eb0a);                // shr ebx, 10 ; p1 = cm[cxt+1]>>10
+						put2(0x29c3);                  // sub ebx, eax, ; p1-p0
+						put3(0x0fafda);                // imul ebx, edx ; (p1-p0)*wt
+						put3(0xc1e006);                // shr eax, 6
+						put2(0x01d8);                  // add eax, ebx ; p in 0..2^28-1
+						put3(0xc1e80d);                // shr eax, 13  ; p in 0..32767
+						put4a(0x0fbf8447, off(stretcht));  // movsx eax, word [edi+eax*2+...]
+						put2a(0x8987, off(p[i]));      // mov [edi+&p[i]], eax
+						break;
+
+					default:
+						error("invalid ZPAQ component");
+				}
+			}
+
+			// return squash(p[n-1])
+			put2a(0x8b87, off(p[n - 1]));          // mov eax, [edi+...]
+			put1a(0x05, 0x800);                  // add eax, 2048
+			put4a(0x0fbf8447, off(squasht[0]));  // movsx eax, word [edi+eax*2+...]
+			put1(0x5f);                          // pop edi
+			put1(0x5e);                          // pop esi
+			put1(0x5d);                          // pop ebp
+			put1(0x5b);                          // pop ebx
+			put1(0xc3);                          // ret
+
+			// Initialize for update() Put predictor address in edi/rdi
+			// and bit y=0..1 in ebp
+			int save_o = o;
+			o = 5;
+			put1a(0xe9, save_o - 10);      // jmp update
+			o = save_o;
+			put1(0x53);                  // push ebx/rbx
+			put1(0x55);                  // push ebp/rbp
+			put1(0x56);                  // push esi/rsi
+			put1(0x57);                  // push edi/rdi
+			if (S == 4)
+			{
+				put4(0x8b7c2414);          // mov edi,[esp+0x14] ; (1st arg = pr)
+				put4(0x8b6c2418);          // mov ebp,[esp+0x18] ; (2nd arg = y)
+			}
+			else
+			{
+#if defined(unix) && !defined(__CYGWIN__)  // (1st arg already in rdi)
+    put3(0x4889f5);            // mov rbp, rsi (2nd arg in Linux-64)
+#else
+				put3(0x4889cf);            // mov rdi, rcx (1st arg in Win64)
+				put3(0x4889d5);            // mov rbp, rdx (2nd arg)
+#endif
+			}
+
+			// Code update() for each component
+			cp = hcomp + 7;
+			for (int i = 0; i < n; ++i, cp += compsize[cp[0]])
+			{
+				assert(cp - hcomp < pr.z.cend);
+				assert(cp[0] >= 1 && cp[0] <= 9);
+				assert(compsize[cp[0]] > 0 && compsize[cp[0]] < 8);
+				switch (cp[0])
+				{
+
+					case CONS:  // c
+						break;
+
+					case SSE:  // sizebits j start limit
+					case CM:   // sizebits limit
+							   // train(cr, y);
+							   //
+							   // reduce prediction error in cr.cm
+							   // void train(Component& cr, int y) {
+							   //   assert(y==0 || y==1);
+							   //   U32& pn=cr.cm(cr.cxt);
+							   //   U32 count=pn&0x3ff;
+							   //   int error=y*32767-(cr.cm(cr.cxt)>>17);
+							   //   pn+=(error*dt[count]&-1024)+(count<cr.limit);
+
+						if (S == 8) put1(0x48);          // rex.w (esi->rsi)
+						put2a(0x8bb7, offc(cm));       // mov esi,[edi+cm]  ; cm
+						put2a(0x8b87, offc(cxt));      // mov eax,[edi+cxt] ; cxt
+						put1a(0x25, pr.comp[i].cm.size() - 1);  // and eax, size-1
+						if (S == 8) put1(0x48);          // rex.w
+						put3(0x8d3486);                // lea esi,[esi+eax*4] ; &cm[cxt]
+						put2(0x8b06);                  // mov eax,[esi] ; cm[cxt]
+						put2(0x89c2);                  // mov edx, eax  ; cm[cxt]
+						put3(0xc1e811);                // shr eax, 17   ; cm[cxt]>>17
+						put2(0x89e9);                  // mov ecx, ebp  ; y
+						put3(0xc1e10f);                // shl ecx, 15   ; y*32768
+						put2(0x29e9);                  // sub ecx, ebp  ; y*32767
+						put2(0x29c1);                  // sub ecx, eax  ; error
+						put2a(0x81e2, 0x3ff);          // and edx, 1023 ; count
+						put3a(0x8b8497, off(dt));      // mov eax,[edi+edx*4+dt] ; dt[count]
+						put3(0x0fafc8);                // imul ecx, eax ; error*dt[count]
+						put2a(0x81e1, 0xfffffc00);     // and ecx, -1024
+						put2a(0x81fa, cp[2 + 2 * (cp[0] == SSE)] * 4); // cmp edx, limit*4
+						put2(0x110e);                  // adc [esi], ecx ; pn+=...
+						break;
+
+					case ICM:   // sizebits: cxt=bh, ht[c][0..15]=bh row
+								// cr.ht[cr.c+(hmap4&15)]=st.next(cr.ht[cr.c+(hmap4&15)], y);
+								// U32& pn=cr.cm(cr.cxt);
+								// pn+=int(y*32767-(pn>>8))>>2;
+
+					case ISSE:  // sizebits j  -- c=hi, cxt=bh
+								// assert(cr.cxt==cr.ht[cr.c+(hmap4&15)]);
+								// int err=y*32767-squash(p[i]);
+								// int *wt=(int*)&cr.cm[cr.cxt*2];
+								// wt[0]=clamp512k(wt[0]+((err*p[cp[2]]+(1<<12))>>13));
+								// wt[1]=clamp512k(wt[1]+((err+16)>>5));
+								// cr.ht[cr.c+(hmap4&15)]=st.next(cr.cxt, y);
+
+						// update bit history bh to next(bh,y=ebp) in ht[c+(hmap4&15)]
+						put3(0x8b4700 + off(hmap4));     // mov eax, [edi+&hmap4]
+						put3(0x83e00f);                // and eax, 15
+						put2a(0x0387, offc(c));        // add eax [edi+&c] ; cxt
+						if (S == 8) put1(0x48);          // rex.w
+						put2a(0x8bb7, offc(ht));       // mov esi, [edi+&ht]
+						put4(0x0fb61406);              // movzx edx, byte [esi+eax] ; bh
+						put4(0x8d5c9500);              // lea ebx, [ebp+edx*4] ; index to st
+						put4a(0x0fb69c1f, off(st));    // movzx ebx,byte[edi+ebx+st]; next bh
+						put3(0x881c06);                // mov [esi+eax], bl ; save next bh
+						if (S == 8) put1(0x48);          // rex.w
+						put2a(0x8bb7, offc(cm));       // mov esi, [edi+&cm]
+
+						// ICM: update cm[cxt=edx=bit history] to reduce prediction error
+						// esi = &cm
+						if (cp[0] == ICM)
+						{
+							if (S == 8) put1(0x48);        // rex.w
+							put3(0x8d3496);              // lea esi, [esi+edx*4] ; &cm[bh]
+							put2(0x8b06);                // mov eax, [esi] ; pn
+							put3(0xc1e808);              // shr eax, 8 ; pn>>8
+							put2(0x89e9);                // mov ecx, ebp ; y
+							put3(0xc1e10f);              // shl ecx, 15
+							put2(0x29e9);                // sub ecx, ebp ; y*32767
+							put2(0x29c1);                // sub ecx, eax
+							put3(0xc1f902);              // sar ecx, 2
+							put2(0x010e);                // add [esi], ecx
+						}
+
+						// ISSE: update weights. edx=cxt=bit history (0..255), esi=cm[512]
+						else
+						{
+							put2a(0x8b87, off(p[i]));    // mov eax, [edi+&p[i]]
+							put1a(0x05, 2048);           // add eax, 2048
+							put4a(0x0fb78447, off(squasht)); // movzx eax, word [edi+eax*2+..]
+							put2(0x89e9);                // mov ecx, ebp ; y
+							put3(0xc1e10f);              // shl ecx, 15
+							put2(0x29e9);                // sub ecx, ebp ; y*32767
+							put2(0x29c1);                // sub ecx, eax ; err
+							put2a(0x8b87, off(p[cp[2]]));// mov eax, [edi+&p[j]]
+							put3(0x0fafc1);              // imul eax, ecx
+							put1a(0x05, (1 << 12));        // add eax, 4096
+							put3(0xc1f80d);              // sar eax, 13
+							put3(0x0304d6);              // add eax, [esi+edx*8] ; wt[0]
+							put1a(0x3d, (1 << 19) - 1);      // cmp eax, (1<<19)-1
+							put2(0x7e05);                // jle L1
+							put1a(0xb8, (1 << 19) - 1);      // mov eax, (1<<19)-1
+							put1a(0x3d, 0xfff80000);     // cmp eax, -1<<19
+							put2(0x7d05);                // jge L2
+							put1a(0xb8, 0xfff80000);     // mov eax, -1<<19
+							put3(0x8904d6);              // L2: mov [esi+edx*8], eax
+							put3(0x83c110);              // add ecx, 16 ; err
+							put3(0xc1f905);              // sar ecx, 5
+							put4(0x034cd604);            // add ecx, [esi+edx*8+4] ; wt[1]
+							put2a(0x81f9, (1 << 19) - 1);    // cmp ecx, (1<<19)-1
+							put2(0x7e05);                // jle L3
+							put1a(0xb9, (1 << 19) - 1);      // mov ecx, (1<<19)-1
+							put2a(0x81f9, 0xfff80000);   // cmp ecx, -1<<19
+							put2(0x7d05);                // jge L4
+							put1a(0xb9, 0xfff80000);     // mov ecx, -1<<19
+							put4(0x894cd604);            // L4: mov [esi+edx*8+4], ecx
+						}
+						break;
+
+					case MATCH: // sizebits bufbits:
+								//   a=len, b=offset, c=bit, cm=index, cxt=bitpos
+								//   ht=buf, limit=pos
+								// assert(cr.a<=255);
+								// assert(cr.c==0 || cr.c==1);
+								// assert(cr.cxt<8);
+								// assert(cr.cm.size()==(size_t(1)<<cp[1]));
+								// assert(cr.ht.size()==(size_t(1)<<cp[2]));
+								// if (int(cr.c)!=y) cr.a=0;  // mismatch?
+								// cr.ht(cr.limit)+=cr.ht(cr.limit)+y;
+								// if (++cr.cxt==8) {
+								//   cr.cxt=0;
+								//   ++cr.limit;
+								//   cr.limit&=(1<<cp[2])-1;
+								//   if (cr.a==0) {  // look for a match
+								//     cr.b=cr.limit-cr.cm(h[i]);
+								//     if (cr.b&(cr.ht.size()-1))
+								//       while (cr.a<255
+								//              && cr.ht(cr.limit-cr.a-1)==cr.ht(cr.limit-cr.a-cr.b-1))
+								//         ++cr.a;
+								//   }
+								//   else cr.a+=cr.a<255;
+								//   cr.cm(h[i])=cr.limit;
+								// }
+
+						// Set pointers ebx=&cm, esi=&ht
+						if (S == 8) put1(0x48);          // rex.w
+						put2a(0x8bb7, offc(ht));       // mov esi, [edi+&ht]
+						if (S == 8) put1(0x48);          // rex.w
+						put2a(0x8b9f, offc(cm));       // mov ebx, [edi+&cm]
+
+						// if (c!=y) a=0;
+						put2a(0x8b87, offc(c));        // mov eax, [edi+&c]
+						put2(0x39e8);                  // cmp eax, ebp ; y
+						put2(0x7408);                  // jz L1
+						put2(0x31c0);                  // xor eax, eax
+						put2a(0x8987, offc(a));        // mov [edi+&a], eax
+
+						// ht(limit)+=ht(limit)+y  (1E)
+						put2a(0x8b87, offc(limit));    // mov eax, [edi+&limit]
+						put4(0x0fb60c06);              // movzx, ecx, byte [esi+eax]
+						put2(0x01c9);                  // add ecx, ecx
+						put2(0x01e9);                  // add ecx, ebp
+						put3(0x880c06);                // mov [esi+eax], cl
+
+						// if (++cxt==8)
+						put2a(0x8b87, offc(cxt));      // mov eax, [edi+&cxt]
+						put2(0xffc0);                  // inc eax
+						put3(0x83e007);                // and eax,byte +0x7
+						put2a(0x8987, offc(cxt));      // mov [edi+&cxt],eax
+						put2a(0x0f85, 0x9b);           // jnz L8
+
+						// ++limit;
+						// limit&=bufsize-1;
+						put2a(0x8b87, offc(limit));    // mov eax,[edi+&limit]
+						put2(0xffc0);                  // inc eax
+						put1a(0x25, (1 << cp[2]) - 1);     // and eax, bufsize-1
+						put2a(0x8987, offc(limit));    // mov [edi+&limit],eax
+
+						// if (a==0)
+						put2a(0x8b87, offc(a));        // mov eax, [edi+&a]
+						put2(0x85c0);                  // test eax,eax
+						put2(0x755c);                  // jnz L6
+
+						//   b=limit-cm(h[i])
+						put2a(0x8b8f, off(h[i]));      // mov ecx,[edi+h[i]]
+						put2a(0x81e1, (1 << cp[1]) - 1);   // and ecx, size-1
+						put2a(0x8b87, offc(limit));    // mov eax,[edi-&limit]
+						put3(0x2b048b);                // sub eax,[ebx+ecx*4]
+						put2a(0x8987, offc(b));        // mov [edi+&b],eax
+
+						//   if (b&(bufsize-1))
+						put1a(0xa9, (1 << cp[2]) - 1);     // test eax, bufsize-1
+						put2(0x7448);                  // jz L7
+
+						//      while (a<255 && ht(limit-a-1)==ht(limit-a-b-1)) ++a;
+						put1(0x53);                    // push ebx
+						put2a(0x8b9f, offc(limit));    // mov ebx,[edi+&limit]
+						put2(0x89da);                  // mov edx,ebx
+						put2(0x29c3);                  // sub ebx,eax  ; limit-b
+						put2(0x31c9);                  // xor ecx,ecx  ; a=0
+						put2a(0x81f9, 0xff);           // L2: cmp ecx,0xff ; while
+						put2(0x741c);                  // jz L3 ; break
+						put2(0xffca);                  // dec edx
+						put2(0xffcb);                  // dec ebx
+						put2a(0x81e2, (1 << cp[2]) - 1);   // and edx, bufsize-1
+						put2a(0x81e3, (1 << cp[2]) - 1);   // and ebx, bufsize-1
+						put3(0x8a0416);                // mov al,[esi+edx]
+						put3(0x3a041e);                // cmp al,[esi+ebx]
+						put2(0x7504);                  // jnz L3 ; break
+						put2(0xffc1);                  // inc ecx
+						put2(0xebdc);                  // jmp short L2 ; end while
+						put1(0x5b);                    // L3: pop ebx
+						put2a(0x898f, offc(a));        // mov [edi+&a],ecx
+						put2(0xeb0e);                  // jmp short L7
+
+						// a+=(a<255)
+						put1a(0x3d, 0xff);             // L6: cmp eax, 0xff ; a
+						put3(0x83d000);                // adc eax, 0
+						put2a(0x8987, offc(a));        // mov [edi+&a],eax
+
+						// cm(h[i])=limit
+						put2a(0x8b87, off(h[i]));      // L7: mov eax,[edi+&h[i]]
+						put1a(0x25, (1 << cp[1]) - 1);     // and eax, size-1
+						put2a(0x8b8f, offc(limit));    // mov ecx,[edi+&limit]
+						put3(0x890c83);                // mov [ebx+eax*4],ecx
+													   // L8:
+						break;
+
+					case AVG:  // j k wt
+						break;
+
+					case MIX2: // sizebits j k rate mask
+							   // cm=wt[size], cxt=input
+							   // assert(cr.a16.size()==cr.c);
+							   // assert(cr.cxt<cr.a16.size());
+							   // int err=(y*32767-squash(p[i]))*cp[4]>>5;
+							   // int w=cr.a16[cr.cxt];
+							   // w+=(err*(p[cp[2]]-p[cp[3]])+(1<<12))>>13;
+							   // if (w<0) w=0;
+							   // if (w>65535) w=65535;
+							   // cr.a16[cr.cxt]=w;
+
+						// set ecx=err
+						put2a(0x8b87, off(p[i]));      // mov eax, [edi+&p[i]]
+						put1a(0x05, 2048);             // add eax, 2048
+						put4a(0x0fb78447, off(squasht));//movzx eax, word [edi+eax*2+&squasht]
+						put2(0x89e9);                  // mov ecx, ebp ; y
+						put3(0xc1e10f);                // shl ecx, 15
+						put2(0x29e9);                  // sub ecx, ebp ; y*32767
+						put2(0x29c1);                  // sub ecx, eax
+						put2a(0x69c9, cp[4]);          // imul ecx, rate
+						put3(0xc1f905);                // sar ecx, 5  ; err
+
+						// Update w
+						put2a(0x8b87, offc(cxt));      // mov eax, [edi+&cxt]
+						if (S == 8) put1(0x48);          // rex.w
+						put2a(0x8bb7, offc(a16));      // mov esi, [edi+&a16]
+						if (S == 8) put1(0x48);          // rex.w
+						put3(0x8d3446);                // lea esi, [esi+eax*2] ; &w
+						put2a(0x8b87, off(p[cp[2]]));  // mov eax, [edi+&p[j]]
+						put2a(0x2b87, off(p[cp[3]]));  // sub eax, [edi+&p[k]] ; p[j]-p[k]
+						put3(0x0fafc1);                // imul eax, ecx  ; * err
+						put1a(0x05, 1 << 12);            // add eax, 4096
+						put3(0xc1f80d);                // sar eax, 13
+						put3(0x0fb716);                // movzx edx, word [esi] ; w
+						put2(0x01d0);                  // add eax, edx
+						put1a(0xba, 0xffff);           // mov edx, 65535
+						put2(0x39d0);                  // cmp eax, edx
+						put3(0x0f4fc2);                // cmovg eax, edx
+						put2(0x31d2);                  // xor edx, edx
+						put2(0x39d0);                  // cmp eax, edx
+						put3(0x0f4cc2);                // cmovl eax, edx
+						put3(0x668906);                // mov word [esi], ax
+						break;
+
+					case MIX: // sizebits j m rate mask
+							  // cm=wt[size][m], cxt=input
+							  // int m=cp[3];
+							  // assert(m>0 && m<=i);
+							  // assert(cr.cm.size()==m*cr.c);
+							  // assert(cr.cxt+m<=cr.cm.size());
+							  // int err=(y*32767-squash(p[i]))*cp[4]>>4;
+							  // int* wt=(int*)&cr.cm[cr.cxt];
+							  // for (int j=0; j<m; ++j)
+							  //   wt[j]=clamp512k(wt[j]+((err*p[cp[2]+j]+(1<<12))>>13));
+
+						// set ecx=err
+						put2a(0x8b87, off(p[i]));      // mov eax, [edi+&p[i]]
+						put1a(0x05, 2048);             // add eax, 2048
+						put4a(0x0fb78447, off(squasht));//movzx eax, word [edi+eax*2+&squasht]
+						put2(0x89e9);                  // mov ecx, ebp ; y
+						put3(0xc1e10f);                // shl ecx, 15
+						put2(0x29e9);                  // sub ecx, ebp ; y*32767
+						put2(0x29c1);                  // sub ecx, eax
+						put2a(0x69c9, cp[4]);          // imul ecx, rate
+						put3(0xc1f904);                // sar ecx, 4  ; err
+
+						// set esi=wt
+						put2a(0x8b87, offc(cxt));      // mov eax, [edi+&cxt] ; cxt
+						if (S == 8) put1(0x48);          // rex.w
+						put2a(0x8bb7, offc(cm));       // mov esi, [edi+&cm]
+						if (S == 8) put1(0x48);          // rex.w
+						put3(0x8d3486);                // lea esi, [esi+eax*4] ; wt
+
+						for (int k = 0; k < cp[3]; ++k)
+						{
+							put2a(0x8b87, off(p[cp[2] + k]));//mov eax, [edi+&p[cp[2]+k]
+							put3(0x0fafc1);              // imul eax, ecx
+							put1a(0x05, 1 << 12);          // add eax, 1<<12
+							put3(0xc1f80d);              // sar eax, 13
+							put2(0x0306);                // add eax, [esi]
+							put1a(0x3d, (1 << 19) - 1);      // cmp eax, (1<<19)-1
+							put2(0x7e05);                // jge L1
+							put1a(0xb8, (1 << 19) - 1);      // mov eax, (1<<19)-1
+							put1a(0x3d, 0xfff80000);     // cmp eax, -1<<19
+							put2(0x7d05);                // jle L2
+							put1a(0xb8, 0xfff80000);     // mov eax, -1<<19
+							put2(0x8906);                // L2: mov [esi], eax
+							if (k < cp[3] - 1)
+							{
+								if (S == 8) put1(0x48);      // rex.w
+								put3(0x83c604);            // add esi, 4
+							}
+						}
+						break;
+
+					default:
+						error("invalid ZPAQ component");
+				}
+			}
+
+			// return from update()
+			put1(0x5f);                 // pop edi
+			put1(0x5e);                 // pop esi
+			put1(0x5d);                 // pop ebp
+			put1(0x5b);                 // pop ebx
+			put1(0xc3);                 // ret
+
+			return o;
 		}
 
 		// sdt2k[i]=2048/i;
