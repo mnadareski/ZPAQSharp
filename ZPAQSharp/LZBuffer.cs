@@ -150,18 +150,18 @@ namespace ZPAQSharp
 
 		LZBuffer::LZBuffer(StringBuffer& inbuf, int args[], const unsigned* sap):
 
-	ht((args[1]&3)==3 ? (inbuf.size()+1)*!sap      // for BWT suffix array
+	ht((args[1]&3)==3 ? (inbuf.Length+1)*!sap      // for BWT suffix array
         : args[5]-args[0]<21 ? 1u<<args[5]         // for LZ77 hash table
-        : (inbuf.size() *!sap)+(1u<<17<<args[0])),  // for LZ77 SA and ISA
+        : (inbuf.Length *!sap)+(1u<<17<<args[0])),  // for LZ77 SA and ISA
     in(inbuf.data()),
 
 	checkbits(args[5]-args[0]<21 ? 12-args[0] : 17+args[0]),
 
 	level(args[1]&3),
 
-	htsize(ht.size()),
+	htsize(ht.Length),
 
-	n(inbuf.size()),
+	n(inbuf.Length),
 
 	i(0),
 
@@ -208,14 +208,14 @@ namespace ZPAQSharp
 					sa = sap;
 				else
 				{
-					assert(ht.size() >= n);
-					assert(ht.size() > 0);
+					assert(ht.Length >= n);
+					assert(ht.Length > 0);
 					sa = &ht[0];
 					if (n > 0) divsufsort((const unsigned char*)in, (int*)sa, n);
 				}
 				if (level < 3)
 				{
-					assert(ht.size() >= (n * (sap == 0)) + (1u << 17 << args[0]));
+					assert(ht.Length >= (n * (sap == 0)) + (1u << 17 << args[0]));
 					isa = &ht[n * (sap == 0)];
 				}
 			}

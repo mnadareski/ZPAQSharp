@@ -5,10 +5,10 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-using U8 = System.Byte;
-using U16 = System.UInt16;
-using U32 = System.UInt32;
-using U64 = System.UInt64;
+using byte = System.Byte;
+using ushort = System.UInt16;
+using uint = System.UInt32;
+using ulong = System.UInt64;
 
 namespace ZPAQSharp
 {
@@ -26,7 +26,7 @@ namespace ZPAQSharp
 			rpos = 0;
 			wpos = 0;
 			pr = new Predictor(z);
-			buf = new Array<char>((ulong)BUFSIZE);
+			buf = new char[]((ulong)BUFSIZE);
 		}
 
 		public int decompress() // return a byte or EOF
@@ -99,7 +99,7 @@ namespace ZPAQSharp
 
 		public void init() // initialize at start of block
 		{
-			pr.init();
+			pr.@init();
 			if (pr.isModeled()) low = 1, high = 0xFFFFFFFF, curr = 0;
 			else low = high = curr = 0;
 		}
@@ -118,7 +118,7 @@ namespace ZPAQSharp
 				Debug.Assert(wpos <= BUFSIZE);
 			}
 
-			return rpos < wpos ? (U8)buf[rpos++] : -1;
+			return rpos < wpos ? (byte)buf[rpos++] : -1;
 		}
 
 		public int buffered() // how far read ahead?
@@ -126,12 +126,12 @@ namespace ZPAQSharp
 			return (int)(wpos - rpos);
 		}
 
-		private U32 low, high;     // range
-		private U32 curr;          // last 4 bytes of archive or remaining bytes in subblock
-		private U32 rpos, wpos;    // read, write position in buf
+		private uint low, high;     // range
+		private uint curr;          // last 4 bytes of archive or remaining bytes in subblock
+		private uint rpos, wpos;    // read, write position in buf
 		private Predictor pr;      // to get p
 		private int BUFSIZE = 1 << 16;
-		private Array<char> buf;   // input buffer of size BUFSIZE bytes
+		private char[] buf;   // input buffer of size BUFSIZE bytes
 
 		private int decode(int p)  // return decoded bit (0..1) with prob. p (0..65535)
 		{
@@ -140,7 +140,7 @@ namespace ZPAQSharp
 			assert(high > low && low > 0);
 			if (curr < low || curr > high) error("archive corrupted");
 			assert(curr >= low && curr <= high);
-			U32 mid = low + U32(((high - low) * U64(U32(p))) >> 16);  // split range
+			uint mid = low + uint(((high - low) * ulong(uint(p))) >> 16);  // split range
 			assert(high > mid && mid >= low);
 			int y;
 			if (curr <= mid) y = 1, high = mid;  // pick half

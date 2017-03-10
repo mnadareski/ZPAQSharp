@@ -1,7 +1,7 @@
-﻿using U8 = System.Byte;
-using U16 = System.UInt16;
-using U32 = System.UInt32;
-using U64 = System.UInt64;
+﻿using byte = System.Byte;
+using ushort = System.UInt16;
+using uint = System.UInt32;
+using ulong = System.UInt64;
 
 namespace ZPAQSharp
 {
@@ -19,7 +19,7 @@ namespace ZPAQSharp
 		{
 			for (int i = 0; i < n; ++i)
 			{
-				put((U8)buf[i]);
+				put((byte)buf[i]);
 			}
 		}
 

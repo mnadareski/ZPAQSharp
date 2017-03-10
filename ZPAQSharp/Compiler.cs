@@ -16,7 +16,7 @@ namespace ZPAQSharp
 			this.args = args;
 			this.hz = hz;
 			this.pz = pz;
-			this.out2 = out2;
+			this.@out2 = out2;
 			if_stack = new Stack(1000);
 			do_stack = new Stack(1000);
 
@@ -24,7 +24,7 @@ namespace ZPAQSharp
 			state = 0;
 			hz.clear();
 			pz.clear();
-			hz.header.resize(68000);
+			Array.Resize(ref hz.header, 68000);
 
 			// Compile the COMP section of header
 			RToken("comp");
@@ -68,7 +68,7 @@ namespace ZPAQSharp
 			// Compile PCOMP pcomp_cmd ; program... END
 			else if (op == (int)CompType.PCOMP)
 			{
-				pz.header.resize(68000);
+				Array.Resize(ref pz.header, 68000);
 				pz.header[4] = hz.header[4];  // ph
 				pz.header[5] = hz.header[5];  // pm
 				pz.cend = 8;
@@ -231,7 +231,7 @@ namespace ZPAQSharp
 			int a = inptr;
 			for (; (@in[a] > ' ' && @in[a] != '(' && word[wordptr] != '\0'); ++a, ++wordptr)
 			{
-				if (tolower(@in[a]) != tolower(word[wordptr]))
+				if (ToLower(@in[a]) != ToLower(word[wordptr]))
 				{
 					return false;
 				}
@@ -334,13 +334,13 @@ namespace ZPAQSharp
 				{
 					op = (int)CompType.JF;
 					operand = 0; // set later
-					if_stack.push((ushort)(z.hend + 1)); // save jump target location
+					if_stack.Push((ushort)(z.hend + 1)); // save jump target location
 				}
 				else if (op == (int)CompType.IFNOT)
 				{
 					op = (int)CompType.JT;
 					operand = 0;
-					if_stack.push((ushort)(z.hend + 1)); // save jump target location
+					if_stack.Push((ushort)(z.hend + 1)); // save jump target location
 				}
 				else if (op == (int)CompType.IFL || op == (int)CompType.IFNOTL) // long if
 				{
@@ -355,7 +355,7 @@ namespace ZPAQSharp
 					z.header[z.hend++] = (3);
 					op = (int)CompType.LJ;
 					operand = operand2 = 0;
-					if_stack.push((ushort)(z.hend + 1));
+					if_stack.Push((ushort)(z.hend + 1));
 				}
 				else if (op == (int)CompType.ELSE || op == (int)CompType.ELSEL)
 				{
@@ -369,7 +369,7 @@ namespace ZPAQSharp
 						op = (int)CompType.LJ;
 						operand = operand2 = 0;
 					}
-					int a = if_stack.pop();  // conditional jump target location
+					int a = if_stack.Pop();  // conditional jump target location
 					if (a <= comp_begin || a >= z.hend)
 					{
 						throw new Exception("Expected target location to be within the bounds");
@@ -381,7 +381,7 @@ namespace ZPAQSharp
 						int j = z.hend - a + 1 + (op == (int)CompType.LJ ? 1 : 0); // offset at IF
 						assert(j >= 0);
 						if (j > 127) SyntaxError("IF too big, try IFL, IFNOTL");
-						z.header[a] = j;
+						z.header[a] = (byte)j;
 					}
 					else
 					{  // IFL, IFNOTL
@@ -390,12 +390,12 @@ namespace ZPAQSharp
 						z.header[a] = j & 255;
 						z.header[a + 1] = (j >> 8) & 255;
 					}
-					if_stack.push((ushort)(z.hend + 1));  // save JMP target location
+					if_stack.Push((ushort)(z.hend + 1));  // save JMP target location
 				}
 				else if (op == (int)CompType.ENDIF)
 				{
-					int a = if_stack.pop();  // jump target address
-					assert(a > comp_begin && a < int(z.hend));
+					int a = if_stack.Pop();  // jump target address
+					assert(a > comp_begin && a < (int)(z.hend));
 					int j = z.hend - a - 1;  // jump offset
 					assert(j >= 0);
 					if (z.header[a - 1] != (int)CompType.LJ)
@@ -406,7 +406,7 @@ namespace ZPAQSharp
 					}
 					else
 					{
-						assert(a + 1 < int(z.hend));
+						assert(a + 1 < (int)(z.hend));
 						j = z.hend - comp_begin;
 						z.header[a] = j & 255;
 						z.header[a + 1] = (j >> 8) & 255;
@@ -414,12 +414,12 @@ namespace ZPAQSharp
 				}
 				else if (op == (int)CompType.DO)
 				{
-					do_stack.push((ushort)z.hend);
+					do_stack.Push((ushort)z.hend);
 				}
 				else if (op == (int)CompType.WHILE || op == (int)CompType.UNTIL || op == (int)CompType.FOREVER)
 				{
-					int a = do_stack.pop();
-					assert(a >= comp_begin && a < int(z.hend));
+					int a = do_stack.Pop();
+					assert(a >= comp_begin && a < (int)(z.hend));
 					int j = a - z.hend - 2;
 					assert(j <= -2);
 					if (j >= -127)
@@ -432,7 +432,7 @@ namespace ZPAQSharp
 					else
 					{  // backward long jump
 						j = a - comp_begin;
-						assert(j >= 0 && j < int(z.hend) - comp_begin);
+						assert(j >= 0 && j < (int)(z.hend) - comp_begin);
 						if (op == (int)CompType.WHILE)
 						{
 							z.header[z.hend++] = ((int)CompType.JF);
@@ -470,7 +470,7 @@ namespace ZPAQSharp
 					z.header[z.hend++] = (operand);
 				if (operand2 >= 0)
 					z.header[z.hend++] = (operand2);
-				if (z.hend >= z.header.isize() - 130 || z.hend - z.hbegin + z.cend - 2 > 65535)
+				if (z.hend >= z.header.Length - 130 || z.hend - z.hbegin + z.cend - 2 > 65535)
 					SyntaxError("program too big");
 			}
 			z.header[z.hend++] = (0); // END
@@ -480,18 +480,18 @@ namespace ZPAQSharp
 		// Stack of n elements
 		private class Stack
 		{
-			Array<ushort> s;
-			ulong top;
+			ushort[] s;
+			int top;
 
 			public Stack(int n)
 			{
-				s = new Array<ushort>((ulong)n);
+				s = new ushort[n];
 				top = 0;
 			}
 
-			public void push(ushort x)
+			public void Push(ushort x)
 			{
-				if (top >= s.size())
+				if (top >= s.Length)
 				{
 					LibZPAQ.error("IF or DO nested too deep");
 				}
@@ -499,7 +499,7 @@ namespace ZPAQSharp
 				s[top++] = x;
 			}
 
-			public ushort pop()
+			public ushort Pop()
 			{
 				if (top <= 0)
 				{
@@ -513,7 +513,7 @@ namespace ZPAQSharp
 		Stack if_stack, do_stack;
 
 		// Component names
-		string[] compname = new string[256]
+		private string[] compname = new string[256]
 			{"","const","cm","icm","match","avg","mix2","mix","isse","sse",null,null,null,null,null,null,
 			null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,
 			null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,
@@ -532,43 +532,43 @@ namespace ZPAQSharp
 			null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null};
 
 		// Opcodes
-		string[] opcodelist = new string[272] {
-"error","a++",  "a--",  "a!",   "a=0",  "",     "",     "a=r",
-"b<>a", "b++",  "b--",  "b!",   "b=0",  "",     "",     "b=r",
-"c<>a", "c++",  "c--",  "c!",   "c=0",  "",     "",     "c=r",
-"d<>a", "d++",  "d--",  "d!",   "d=0",  "",     "",     "d=r",
-"*b<>a","*b++", "*b--", "*b!",  "*b=0", "",     "",     "jt",
-"*c<>a","*c++", "*c--", "*c!",  "*c=0", "",     "",     "jf",
-"*d<>a","*d++", "*d--", "*d!",  "*d=0", "",     "",     "r=a",
-"halt", "out",  "",     "hash", "hashd","",     "",     "jmp",
-"a=a",  "a=b",  "a=c",  "a=d",  "a=*b", "a=*c", "a=*d", "a=",
-"b=a",  "b=b",  "b=c",  "b=d",  "b=*b", "b=*c", "b=*d", "b=",
-"c=a",  "c=b",  "c=c",  "c=d",  "c=*b", "c=*c", "c=*d", "c=",
-"d=a",  "d=b",  "d=c",  "d=d",  "d=*b", "d=*c", "d=*d", "d=",
-"*b=a", "*b=b", "*b=c", "*b=d", "*b=*b","*b=*c","*b=*d","*b=",
-"*c=a", "*c=b", "*c=c", "*c=d", "*c=*b","*c=*c","*c=*d","*c=",
-"*d=a", "*d=b", "*d=c", "*d=d", "*d=*b","*d=*c","*d=*d","*d=",
-"",     "",     "",     "",     "",     "",     "",     "",
-"a+=a", "a+=b", "a+=c", "a+=d", "a+=*b","a+=*c","a+=*d","a+=",
-"a-=a", "a-=b", "a-=c", "a-=d", "a-=*b","a-=*c","a-=*d","a-=",
-"a*=a", "a*=b", "a*=c", "a*=d", "a*=*b","a*=*c","a*=*d","a*=",
-"a/=a", "a/=b", "a/=c", "a/=d", "a/=*b","a/=*c","a/=*d","a/=",
-"a%=a", "a%=b", "a%=c", "a%=d", "a%=*b","a%=*c","a%=*d","a%=",
-"a&=a", "a&=b", "a&=c", "a&=d", "a&=*b","a&=*c","a&=*d","a&=",
-"a&~a", "a&~b", "a&~c", "a&~d", "a&~*b","a&~*c","a&~*d","a&~",
-"a|=a", "a|=b", "a|=c", "a|=d", "a|=*b","a|=*c","a|=*d","a|=",
-"a^=a", "a^=b", "a^=c", "a^=d", "a^=*b","a^=*c","a^=*d","a^=",
-"a<<=a","a<<=b","a<<=c","a<<=d","a<<=*b","a<<=*c","a<<=*d","a<<=",
-"a>>=a","a>>=b","a>>=c","a>>=d","a>>=*b","a>>=*c","a>>=*d","a>>=",
-"a==a", "a==b", "a==c", "a==d", "a==*b","a==*c","a==*d","a==",
-"a<a",  "a<b",  "a<c",  "a<d",  "a<*b", "a<*c", "a<*d", "a<",
-"a>a",  "a>b",  "a>c",  "a>d",  "a>*b", "a>*c", "a>*d", "a>",
-"",     "",     "",     "",     "",     "",     "",     "",
-"",     "",     "",     "",     "",     "",     "",     "lj",
-"post", "pcomp","end",  "if",   "ifnot","else", "endif","do",
-"while","until","forever","ifl","ifnotl","elsel",";",    0};
+		private string[] opcodelist = new string[272] {
+		"error","a++",  "a--",  "a!",   "a=0",  "",     "",     "a=r",
+		"b<>a", "b++",  "b--",  "b!",   "b=0",  "",     "",     "b=r",
+		"c<>a", "c++",  "c--",  "c!",   "c=0",  "",     "",     "c=r",
+		"d<>a", "d++",  "d--",  "d!",   "d=0",  "",     "",     "d=r",
+		"*b<>a","*b++", "*b--", "*b!",  "*b=0", "",     "",     "jt",
+		"*c<>a","*c++", "*c--", "*c!",  "*c=0", "",     "",     "jf",
+		"*d<>a","*d++", "*d--", "*d!",  "*d=0", "",     "",     "r=a",
+		"halt", "out",  "",     "hash", "hashd","",     "",     "jmp",
+		"a=a",  "a=b",  "a=c",  "a=d",  "a=*b", "a=*c", "a=*d", "a=",
+		"b=a",  "b=b",  "b=c",  "b=d",  "b=*b", "b=*c", "b=*d", "b=",
+		"c=a",  "c=b",  "c=c",  "c=d",  "c=*b", "c=*c", "c=*d", "c=",
+		"d=a",  "d=b",  "d=c",  "d=d",  "d=*b", "d=*c", "d=*d", "d=",
+		"*b=a", "*b=b", "*b=c", "*b=d", "*b=*b","*b=*c","*b=*d","*b=",
+		"*c=a", "*c=b", "*c=c", "*c=d", "*c=*b","*c=*c","*c=*d","*c=",
+		"*d=a", "*d=b", "*d=c", "*d=d", "*d=*b","*d=*c","*d=*d","*d=",
+		"",     "",     "",     "",     "",     "",     "",     "",
+		"a+=a", "a+=b", "a+=c", "a+=d", "a+=*b","a+=*c","a+=*d","a+=",
+		"a-=a", "a-=b", "a-=c", "a-=d", "a-=*b","a-=*c","a-=*d","a-=",
+		"a*=a", "a*=b", "a*=c", "a*=d", "a*=*b","a*=*c","a*=*d","a*=",
+		"a/=a", "a/=b", "a/=c", "a/=d", "a/=*b","a/=*c","a/=*d","a/=",
+		"a%=a", "a%=b", "a%=c", "a%=d", "a%=*b","a%=*c","a%=*d","a%=",
+		"a&=a", "a&=b", "a&=c", "a&=d", "a&=*b","a&=*c","a&=*d","a&=",
+		"a&~a", "a&~b", "a&~c", "a&~d", "a&~*b","a&~*c","a&~*d","a&~",
+		"a|=a", "a|=b", "a|=c", "a|=d", "a|=*b","a|=*c","a|=*d","a|=",
+		"a^=a", "a^=b", "a^=c", "a^=d", "a^=*b","a^=*c","a^=*d","a^=",
+		"a<<=a","a<<=b","a<<=c","a<<=d","a<<=*b","a<<=*c","a<<=*d","a<<=",
+		"a>>=a","a>>=b","a>>=c","a>>=d","a>>=*b","a>>=*c","a>>=*d","a>>=",
+		"a==a", "a==b", "a==c", "a==d", "a==*b","a==*c","a==*d","a==",
+		"a<a",  "a<b",  "a<c",  "a<d",  "a<*b", "a<*c", "a<*d", "a<",
+		"a>a",  "a>b",  "a>c",  "a>d",  "a>*b", "a>*c", "a>*d", "a>",
+		"",     "",     "",     "",     "",     "",     "",     "",
+		"",     "",     "",     "",     "",     "",     "",     "lj",
+		"post", "pcomp","end",  "if",   "ifnot","else", "endif","do",
+		"while","until","forever","ifl","ifnotl","elsel",";",    null};
 
 		// convert to lower case
-		int tolower(int c) { return (c >= 'A' && c <= 'Z') ? c + 'a' - 'A' : c; }
+		private int ToLower(int c) { return (c >= 'A' && c <= 'Z') ? c + 'a' - 'A' : c; }
 	}
 }

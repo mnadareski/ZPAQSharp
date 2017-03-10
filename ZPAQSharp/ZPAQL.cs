@@ -5,10 +5,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 
-using U8 = System.Byte;
-using U16 = System.UInt16;
-using U32 = System.UInt32;
-using U64 = System.UInt64;
+using byte = System.Byte;
+using ushort = System.UInt16;
+using uint = System.UInt32;
+using ulong = System.UInt64;
 
 namespace ZPAQSharp
 {
@@ -21,7 +21,7 @@ namespace ZPAQSharp
 			rcode = 0;
 			rcode_size = 0;
 			clear();
-			outbuf.resize(1 << 14);
+			Array.Resize(ref outbuf, 1 << 14);
 			bufptr = 0;
 		}
 
@@ -34,16 +34,16 @@ namespace ZPAQSharp
 		{
 			cend = hbegin = hend = 0;  // COMP and HCOMP locations
 			a = b = c = d = f = pc = 0;      // machine state
-			header.resize(0);
-			h.resize(0);
-			m.resize(0);
-			r.resize(0);
+			Array.Resize(ref header, 0);
+			Array.Resize(ref h, 0);
+			Array.Resize(ref m, 0);
+			Array.Resize(ref r, 0);
 			allocx(rcode, rcode_size, 0);
 		}
 
 		public void inith() // Initialize as HCOMP to run
 		{
-			assert(header.isize() > 6);
+			assert(header.Length > 6);
 			assert(output == 0);
 			assert(sha1 == 0);
 			init(header[2], header[3]); // hh, hm
@@ -51,7 +51,7 @@ namespace ZPAQSharp
 
 		public void initp() // Initialize as PCOMP to run
 		{
-			assert(header.isize() > 6);
+			assert(header.Length > 6);
 			init(header[4], header[5]); // ph, pm
 		}
 
@@ -59,7 +59,7 @@ namespace ZPAQSharp
 		{
 			double mem = pow2(header[2] + 2) + pow2(header[3])  // hh hm
 			+ pow2(header[4] + 2) + pow2(header[5])  // ph pm
-			+ header.size();
+			+ header.Length;
 			int cp = 7;  // start of comp list
 			for (int i = 0; i < header[6]; ++i)
 			{  // n
@@ -82,7 +82,7 @@ namespace ZPAQSharp
 
 		// Execute the ZPAQL code with input byte or -1 for EOF.
 		// Use JIT code at rcode if available, or else create it.
-		public void run(U32 input) // Execute with input
+		public void run(uint input) // Execute with input
 		{
 # ifdef NOJIT
 			run0(input);
@@ -100,7 +100,7 @@ namespace ZPAQSharp
 					error("run JIT failed");
 			}
 			a = input;
-			const U32 rc = ((int(*)())(&rcode[0]))();
+			const uint rc = ((int(*)())(&rcode[0]))();
 			if (rc == 0) return;
 			else if (rc == 1) libzpaq::error("Bad ZPAQL opcode");
 			else if (rc == 2) libzpaq::error("Out of memory");
@@ -112,43 +112,43 @@ namespace ZPAQSharp
 		public int read(Reader in2) // Read header
 		{
 			/ Get header size and allocate
-  int hsize = in2->get();
-			hsize += in2->get() * 256;
-			header.resize(hsize + 300);
+  int hsize = in2.get();
+			hsize += in2.get() * 256;
+			Array.Resize(ref header, hsize + 300);
 			cend = hbegin = hend = 0;
 			header[cend++] = hsize & 255;
 			header[cend++] = hsize >> 8;
-			while (cend < 7) header[cend++] = in2->get(); // hh hm ph pm n
+			while (cend < 7) header[cend++] = in2.get(); // hh hm ph pm n
 
 			// Read COMP
 			int n = header[cend - 1];
 			for (int i = 0; i < n; ++i)
 			{
-				int type = in2->get();  // component type
+				int type = in2.get();  // component type
 				if (type < 0 || type > 255) error("unexpected end of file");
 				header[cend++] = type;  // component type
 				int size = compsize[type];
 				if (size < 1) error("Invalid component type");
 				if (cend + size > hsize) error("COMP overflows header");
 				for (int j = 1; j < size; ++j)
-					header[cend++] = in2->get();
+					header[cend++] = in2.get();
 			}
-			if ((header[cend++] = in2->get()) != 0) error("missing COMP END");
+			if ((header[cend++] = in2.get()) != 0) error("missing COMP END");
 
 			// Insert a guard gap and read HCOMP
 			hbegin = hend = cend + 128;
 			if (hend > hsize + 129) error("missing HCOMP");
 			while (hend < hsize + 129)
 			{
-				assert(hend < header.isize() - 8);
-				int op = in2->get();
+				assert(hend < header.Length - 8);
+				int op = in2.get();
 				if (op == -1) error("unexpected end of file");
 				header[hend++] = op;
 			}
-			if ((header[hend++] = in2->get()) != 0) error("missing HCOMP END");
-			assert(cend >= 7 && cend < header.isize());
-			assert(hbegin == cend + 128 && hbegin < header.isize());
-			assert(hend > hbegin && hend < header.isize());
+			if ((header[hend++] = in2.get()) != 0) error("missing HCOMP END");
+			assert(cend >= 7 && cend < header.Length);
+			assert(hbegin == cend + 128 && hbegin < header.Length);
+			assert(hend > hbegin && hend < header.Length);
 			assert(hsize == header[0] + 256 * header[1]);
 			assert(hsize == cend - 2 + hend - hbegin);
 			allocx(rcode, rcode_size, 0);  // clear JIT code
@@ -157,7 +157,7 @@ namespace ZPAQSharp
 
 		public bool write(Writer out2, bool pp) // If pp write PCOMP else HCOMP header
 		{
-			if (header.size() <= 6) return false;
+			if (header.Length <= 6) return false;
 			assert(header[0] + 256 * header[1] == cend - 2 + hend - hbegin);
 			assert(cend >= 7);
 			assert(hbegin >= cend);
@@ -166,19 +166,19 @@ namespace ZPAQSharp
 			if (!pp)
 			{  // if not a postprocessor then write COMP
 				for (int i = 0; i < cend; ++i)
-					out2->put(header[i]);
+					out2.put(header[i]);
 			}
 			else
 			{  // write PCOMP size only
-				out2->put((hend - hbegin) & 255);
-				out2->put((hend - hbegin) >> 8);
+				out2.put((hend - hbegin) & 255);
+				out2.put((hend - hbegin) >> 8);
 			}
 			for (int i = hbegin; i < hend; ++i)
-				out2->put(header[i]);
+				out2.put(header[i]);
 			return true;
 		}
 
-		public int step(U32 input, int mode) // Trace execution (defined externally)
+		public int step(uint input, int mode) // Trace execution (defined externally)
 		{
 			return 0;
 		}
@@ -186,41 +186,41 @@ namespace ZPAQSharp
 		public Writer output;   // Destination for OUT instruction, or 0 to suppress
 		public SHA1 sha1;       // Points to checksum computer
 		
-		public U32 H(int i)		// get element of h
+		public uint H(int i)		// get element of h
 		{
 			return h[(ulong)i];
 		}
 
 		public void flush() // write outbuf[0..bufptr-1] to output and sha1
 		{
-			if (output) output->write(&outbuf[0], bufptr);
-			if (sha1) sha1->write(&outbuf[0], bufptr);
+			if (output) output.write(&outbuf[0], bufptr);
+			if (sha1) sha1.write(&outbuf[0], bufptr);
 			bufptr = 0;
 		}
 
 		public void outc(int ch) // output byte ch (0..255) or -1 at EOS
 		{
-			if (ch < 0 || (outbuf[bufptr] = ch && ++bufptr == outbuf.isize()))
+			if (ch < 0 || (outbuf[bufptr] = ch && ++bufptr == outbuf.Length))
 			{
 				flush();
 			}
 		}
 		// ZPAQ1 block header
-		public Array<U8> header;   // hsize[2] hh hm ph pm n COMP (guard) HCOMP (guard)
+		public byte[] header;   // hsize[2] hh hm ph pm n COMP (guard) HCOMP (guard)
 		public int cend;           // COMP in header[7...cend-1]
 		public int hbegin, hend;   // HCOMP/PCOMP in header[hbegin...hend-1]
 
 		// Machine state for executing HCOMP
-		private Array<U8> m;        // memory array M for HCOMP
-		private Array<U32> h;       // hash array H for HCOMP
-		private Array<U32> r;       // 256 element register array
-		private Array<char> outbuf; // output buffer
+		private byte[] m;        // memory array M for HCOMP
+		private uint[] h;       // hash array H for HCOMP
+		private uint[] r;       // 256 element register array
+		private char[] outbuf; // output buffer
 		private int bufptr;         // number of bytes in outbuf
-		private U32 a, b, c, d;     // machine registers
+		private uint a, b, c, d;     // machine registers
 		private int f;              // condition flag
 		private int pc;             // program counter
 		private int rcode_size;     // length of rcode
-		private U8[] rcode;         // JIT code for run()
+		private byte[] rcode;         // JIT code for run()
 
 		// Support code
 		/*
@@ -354,16 +354,16 @@ In 64 bit mode, the following additional registers are used:
 		{
 			// x86? (not foolproof)
 			const int S = sizeof(char);      // 4 = x86, 8 = x86-64
-			U32 t = 0x12345678;
+			uint t = 0x12345678;
 			if (*(char*)&t != 0x78 || (S != 4 && S != 8))
 				error("JIT supported only for x86-32 and x86-64");
 
-			const U8* hcomp = &header[hbegin];
-			const int hlen = hend - hbegin + 2;
-			const int msize = m.size();
-			const int hsize = h.size();
-			static const int regcode[8] = { 2, 6, 7, 5 }; // a,b,c,d.. -> edx,esi,edi,ebp,eax..
-			Array<int> it(hlen);            // hcomp -> rcode locations
+			byte hcomp = header[hbegin];
+			int hlen = hend - hbegin + 2;
+			int msize = m.Length;
+			int hsize = h.Length;
+			int[] regcode = new int[8] { 2, 6, 7, 5, 0, 0, 0, 0 }; // a,b,c,d.. . edx,esi,edi,ebp,eax..
+			int[] it = new int[hlen];            // hcomp . rcode locations
 			int done = 0;  // number of instructions assembled (0..hlen)
 			int o = 5;  // rcode output index, reserve space for jmp
 
@@ -413,7 +413,7 @@ In 64 bit mode, the following additional registers are used:
 				put3(0x881408);           // mov [rax+rcx], dl
 				put2(0xffc1);             // inc rcx
 				put3(0x41890a);           // mov [r10], ecx
-				put2a(0x81f9, outbuf.size());  // cmp rcx, outbuf.size()
+				put2a(0x81f9, outbuf.Length);  // cmp rcx, outbuf.Length
 				put2(0x7403);             // jz L1
 				put2(0x31c0);             // xor eax, eax
 				put1(0xc3);               // ret
@@ -445,7 +445,7 @@ In 64 bit mode, the following additional registers are used:
 				put3(0x881408);           // mov [eax+ecx], dl
 				put2(0xffc1);             // inc ecx
 				put2a(0x890d, &bufptr);   // mov [bufptr], ecx
-				put2a(0x81f9, outbuf.size());  // cmp ecx, outbuf.size()
+				put2a(0x81f9, outbuf.Length);  // cmp ecx, outbuf.Length
 				put2(0x7403);             // jz L1
 				put2(0x31c0);             // xor eax, eax
 				put1(0xc3);               // ret
@@ -574,8 +574,8 @@ In 64 bit mode, the following additional registers are used:
 					inc = oplen(hcomp + i);
 
 					// If already assembled, then assemble a jump to it
-					U32 t;
-					assert(it.isize() > i);
+					uint t;
+					assert(it.Length > i);
 					assert(i >= 0 && i < hlen);
 					if (code >= 16)
 					{
@@ -593,7 +593,7 @@ In 64 bit mode, the following additional registers are used:
 					// Else assemble the instruction at hcomp[i] to rcode[o]
 					else
 					{
-						assert(i >= 0 && i < it.isize());
+						assert(i >= 0 && i < it.Length);
 						assert(it[i] > 0 && it[i] < 16);
 						assert(o >= 16);
 						it[i] = o;
@@ -974,7 +974,7 @@ In 64 bit mode, the following additional registers are used:
 			  o=it[i];
 
 			  assert(o>=16 && o<rcode_size);
-			  if ((op==39 || op==47) && rcode[o]==0x84) o+=2;  // jt, jf -> skip test
+			  if ((op==39 || op==47) && rcode[o]==0x84) o+=2;  // jt, jf . skip test
 
 			  assert(o>=16 && o<rcode_size);
 			  if (rcode[o]==0x0f) ++o;  // first byte of jz near, jnz near
@@ -1009,19 +1009,19 @@ In 64 bit mode, the following additional registers are used:
 
 		private void init(int hbits, int mbits) // initialize H and M sizes
 		{
-			assert(header.isize() > 0);
+			assert(header.Length > 0);
 			assert(cend >= 7);
 			assert(hbegin >= cend + 128);
 			assert(hend >= hbegin);
-			assert(hend < header.isize() - 130);
+			assert(hend < header.Length - 130);
 			assert(header[0] + 256 * header[1] == cend - 2 + hend - hbegin);
 			assert(bufptr == 0);
-			assert(outbuf.isize() > 0);
+			assert(outbuf.Length > 0);
 			if (hbits > 32) error("H too big");
 			if (mbits > 32) error("M too big");
-			h.resize(1, hbits);
-			m.resize(1, mbits);
-			r.resize(256);
+			Array.Resize(ref h, 1, hbits);
+			Array.Resize(ref m, 1, mbits);
+			Array.Resize(ref r, 256);
 			a = b = c = d = pc = f = 0;
 		}
 
@@ -1224,47 +1224,47 @@ In 64 bit mode, the following additional registers are used:
 				case 217: f = (a == b); break; // A==B
 				case 218: f = (a == c); break; // A==C
 				case 219: f = (a == d); break; // A==D
-				case 220: f = (a == U32(m(b))); break; // A==*B
-				case 221: f = (a == U32(m(c))); break; // A==*C
+				case 220: f = (a == uint(m(b))); break; // A==*B
+				case 221: f = (a == uint(m(c))); break; // A==*C
 				case 222: f = (a == h(d)); break; // A==*D
-				case 223: f = (a == U32(header[pc++])); break; // A== N
+				case 223: f = (a == uint(header[pc++])); break; // A== N
 				case 224: f = 0; break; // A<A
 				case 225: f = (a < b); break; // A<B
 				case 226: f = (a < c); break; // A<C
 				case 227: f = (a < d); break; // A<D
-				case 228: f = (a < U32(m(b))); break; // A<*B
-				case 229: f = (a < U32(m(c))); break; // A<*C
+				case 228: f = (a < uint(m(b))); break; // A<*B
+				case 229: f = (a < uint(m(c))); break; // A<*C
 				case 230: f = (a < h(d)); break; // A<*D
-				case 231: f = (a < U32(header[pc++])); break; // A< N
+				case 231: f = (a < uint(header[pc++])); break; // A< N
 				case 232: f = 0; break; // A>A
 				case 233: f = (a > b); break; // A>B
 				case 234: f = (a > c); break; // A>C
 				case 235: f = (a > d); break; // A>D
-				case 236: f = (a > U32(m(b))); break; // A>*B
-				case 237: f = (a > U32(m(c))); break; // A>*C
+				case 236: f = (a > uint(m(b))); break; // A>*B
+				case 237: f = (a > uint(m(c))); break; // A>*C
 				case 238: f = (a > h(d)); break; // A>*D
-				case 239: f = (a > U32(header[pc++])); break; // A> N
+				case 239: f = (a > uint(header[pc++])); break; // A> N
 				case 255: if ((pc = hbegin + header[pc] + 256 * header[pc + 1]) >= hend) err(); break;//LJ
 				default: err();
 			}
 			return 1;
 		}
 
-		private void run0(U32 input) // default run() if not JIT
+		private void run0(uint input) // default run() if not JIT
 		{
 			assert(cend > 6);
 			assert(hbegin >= cend + 128);
 			assert(hend >= hbegin);
-			assert(hend < header.isize() - 130);
-			assert(m.size() > 0);
-			assert(h.size() > 0);
+			assert(hend < header.Length - 130);
+			assert(m.Length > 0);
+			assert(h.Length > 0);
 			assert(header[0] + 256 * header[1] == cend + hend - hbegin - 2);
 			pc = hbegin;
 			a = input;
 			while (execute()) ;
 		}
 
-		private void div(U32 x)
+		private void div(uint x)
 		{
 			if (x != 0)
 			{
@@ -1276,7 +1276,7 @@ In 64 bit mode, the following additional registers are used:
 			}
 		}
 
-		private void mod(U32 x)
+		private void mod(uint x)
 		{
 			if (x != 0)
 			{
@@ -1288,17 +1288,17 @@ In 64 bit mode, the following additional registers are used:
 			}
 		}
 
-		private void swap(ref U32 x)
+		private void swap(ref uint x)
 		{
 			a ^= x;
 			x ^= a;
 			a ^= x;
 		}
 
-		private void swap(ref U8 x)
+		private void swap(ref byte x)
 		{
 			a ^= x;
-			x = (U8)(x ^ a);
+			x = (byte)(x ^ a);
 			a ^= x;
 		}
 
@@ -1343,7 +1343,7 @@ In 64 bit mode, the following additional registers are used:
 
 		// Return length of ZPAQL instruction at hcomp[0]. Assume 0 padding at end.
 		// A run of identical ++ or -- is counted as 1 instruction.
-		static int oplen(U8[] hcomp, int hcompPtr)
+		static int oplen(byte[] hcomp, int hcompPtr)
 		{
 			if (hcompPtr == 255) return 3;
 			if (hcompPtr % 8 == 7) return 2;
@@ -1357,7 +1357,7 @@ In 64 bit mode, the following additional registers are used:
 		}
 
 		// Write k bytes of x to rcode[o++] MSB first
-		static void put(U8* rcode, int n, int& o, U32 x, int k)
+		static void put(byte* rcode, int n, int& o, uint x, int k)
 		{
 			while (k-- > 0)
 			{
@@ -1367,7 +1367,7 @@ In 64 bit mode, the following additional registers are used:
 		}
 
 		// Write 4 bytes of x to rcode[o++] LSB first
-		static void put4lsb(U8* rcode, int n, int& o, U32 x)
+		static void put4lsb(byte* rcode, int n, int& o, uint x)
 		{
 			for (int k = 0; k < 4; ++k)
 			{
@@ -1385,13 +1385,13 @@ In 64 bit mode, the following additional registers are used:
 #define put5(x,y) put4(x), put1(y)
 #define put6(x,y) put4(x), put2(y)
 #define put4r(x) put4lsb(rcode, rcode_size, o, x)
-#define puta(x) t=U32(size_t(x)), put4r(t)
+#define puta(x) t=uint(size_t(x)), put4r(t)
 #define put1a(x,y) put1(x), puta(y)
 #define put2a(x,y) put2(x), puta(y)
 #define put3a(x,y) put3(x), puta(y)
 #define put4a(x,y) put4(x), puta(y)
 #define put5a(x,y,z) put4(x), put1(y), puta(z)
-#define put2l(x,y) put2(x), t=U32(size_t(y)), put4r(t), \
-		t=U32(size_t(y)>>(S*4)), put4r(t)
+#define put2l(x,y) put2(x), t=uint(size_t(y)), put4r(t), \
+		t=uint(size_t(y)>>(S*4)), put4r(t)
 	}
 }

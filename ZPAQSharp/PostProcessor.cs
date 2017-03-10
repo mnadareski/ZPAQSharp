@@ -46,7 +46,7 @@ namespace ZPAQSharp
 					if (state == 1) z.clear();
 					break;
 				case 1:  // PASS
-					z.outc(c);
+					z.@outc(c);
 					break;
 				case 2: // PROG
 					if (c < 0) error("Unexpected EOS");
@@ -57,7 +57,7 @@ namespace ZPAQSharp
 					if (c < 0) error("Unexpected EOS");
 					hsize += c * 256;  // high byte of psize
 					if (hsize < 1) error("Empty PCOMP");
-					z.header.resize(hsize + 300);
+					Array.Resize(ref z.header, hsize + 300);
 					z.cend = 8;
 					z.hbegin = z.hend = z.cend + 128;
 					z.header[4] = ph;
@@ -66,14 +66,14 @@ namespace ZPAQSharp
 					break;
 				case 4:  // PROG psize[0..1] pcomp[0...]
 					if (c < 0) error("Unexpected EOS");
-					assert(z.hend < z.header.isize());
+					assert(z.hend < z.header.Length);
 					z.header[z.hend++] = c;  // one byte of pcomp
 					if (z.hend - z.hbegin == hsize)
 					{  // last byte of pcomp?
 						hsize = z.cend - 2 + z.hend - z.hbegin;
 						z.header[0] = hsize & 255;  // header size with empty COMP
 						z.header[1] = hsize >> 8;
-						z.initp();
+						z.@initp();
 						state = 5;
 					}
 					break;
@@ -92,7 +92,7 @@ namespace ZPAQSharp
 
 		public void setOutput(Writer @out)
 		{
-			z.output = @out;
+			z.@output = @out;
 		}
 
 		public void setSHA1(SHA1 sha1ptr)

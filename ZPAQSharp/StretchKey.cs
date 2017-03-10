@@ -1,10 +1,7 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Security.Cryptography;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace ZPAQSharp
 {
@@ -13,8 +10,23 @@ namespace ZPAQSharp
 		// Strengthen password pw[0..pwlen-1] and salt[0..saltlen-1]
 		// to produce key buf[0..buflen-1]. Uses O(n*r*p) time and 128*r*n bytes
 		// of memory. n must be a power of 2 and r <= 8.
-		void scrypt(string pw, int pwlen, string salt, int saltlen, int n, int r, int p, char[] buf, int buflen)
+		void scrypt(char[] pw, int pwlen, char[] salt, int saltlen, int n, int r, int p, char[] buf, int buflen)
 		{
+			if (r > 8)
+			{
+				throw new ArgumentException("Should be <= 8", nameof(r));
+			}
+			if (n < 0 || (n & (n - 1)) != 0) // power of 2?
+			{
+				throw new ArgumentException("Should be positive and power of 2", nameof(n));
+			}
+			char[] b = new char[p * r * 128];
+			pbkdf2(pw, pwlen, salt, saltlen, 1, b, p * r * 128);
+			for (int i = 0; i < p; ++i)
+			{
+				smix(b[i * r * 128], r, n);
+			}
+			pbkdf2(pw, pwlen, b, p * r * 128, 1, buf, buflen);
 		}
 
 		// Generate a strong key out[0..31] key[0..31] and salt[0..31].
@@ -79,7 +91,7 @@ namespace ZPAQSharp
 
 		// Hash b[0..15] using 8 rounds of salsa20
 		// Modified from http://cr.yp.to/salsa20.html (public domain) to 8 rounds
-		static void salsa8(U32* b)
+		static void salsa8(uint* b)
 		{
 			unsigned x[16] = { 0 };
 			memcpy(x, b, 64);
@@ -108,11 +120,11 @@ namespace ZPAQSharp
 		}
 
 		// BlockMix_{Salsa20/8, r} on b[0..128*r-1]
-		static void blockmix(U32* b, int r)
+		static void blockmix(uint* b, int r)
 		{
 			assert(r <= 8);
-			U32 x[16];
-			U32 y[256];
+			uint x[16];
+			uint y[256];
 			memcpy(x, b + 32 * r - 16, 64);
 			for (int i = 0; i < 2 * r; ++i)
 			{
@@ -127,7 +139,7 @@ namespace ZPAQSharp
 		// Mix b[0..128*r-1]. Uses 128*r*n bytes of memory and O(r*n) time
 		static void smix(char* b, int r, int n)
 		{
-			libzpaq::Array<U32> x(32 * r), v(32 * r * n);
+			libzpaq::uint[] x(32 * r), v(32 * r * n);
 			for (int i = 0; i < r * 128; ++i) x[i / 4] += (b[i] & 255) << i % 4 * 8;
 			for (int i = 0; i < n; ++i)
 			{
@@ -136,34 +148,18 @@ namespace ZPAQSharp
 			}
 			for (int i = 0; i < n; ++i)
 			{
-				U32 j = x[(2 * r - 1) * 16] & (n - 1);
+				uint j = x[(2 * r - 1) * 16] & (n - 1);
 				for (int k = 0; k < r * 32; ++k) x[k] ^= v[j * r * 32 + k];
 				blockmix(&x[0], r);
 			}
 			for (int i = 0; i < r * 128; ++i) b[i] = x[i / 4] >> (i % 4 * 8);
 		}
 
-		// Strengthen password pw[0..pwlen-1] and salt[0..saltlen-1]
-		// to produce key buf[0..buflen-1]. Uses O(n*r*p) time and 128*r*n bytes
-		// of memory. n must be a power of 2 and r <= 8.
-		void scrypt(const char* pw, int pwlen,
-
-			const char* salt, int saltlen,
-
-			int n, int r, int p, char* buf, int buflen) {
-  assert(r<=8);
-  assert(n>0 && (n&(n-1))==0);  // power of 2?
-  libzpaq::Array<char> b(p* r*128);
-  pbkdf2(pw, pwlen, salt, saltlen, 1, &b[0], p* r*128);
-  for (int i=0; i<p; ++i) smix(&b[i * r * 128], r, n);
-  pbkdf2(pw, pwlen, &b[0], p* r*128, 1, buf, buflen);
+		// Stretch key in[0..31], assumed to be SHA256(password), with
+		// NUL terminate salt to produce new key out[0..31]
+		void stretchKey(char[] @out, char[] @in, char[] salt)
+		{
+			scrypt(@in, 32, salt, 32, 1 << 14, 8, 1, @out, 32);
+		}
 	}
-
-	// Stretch key in[0..31], assumed to be SHA256(password), with
-	// NUL terminate salt to produce new key out[0..31]
-	void stretchKey(char* out, const char* in, const char* salt)
-	{
-		scrypt(in, 32, salt, 32, 1 << 14, 8, 1, out, 32);
-	}
-}
 }

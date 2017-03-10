@@ -5,10 +5,10 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-using U8 = System.Byte;
-using U16 = System.UInt16;
-using U32 = System.UInt32;
-using U64 = System.UInt64;
+using byte = System.Byte;
+using ushort = System.UInt16;
+using uint = System.UInt32;
+using ulong = System.UInt64;
 
 namespace ZPAQSharp
 {
@@ -124,14 +124,14 @@ namespace ZPAQSharp
 				return;
 			lengthen(n);
 			Debug.Assert(p);
-			Debug.Assert(wpos + (U64)n <= al);
+			Debug.Assert(wpos + (ulong)n <= al);
 			if (buf != null)
 				memcpy(p + wpos, buf, n);
 			wpos += n;
 		}
 
 		// Read a single byte. Return EOF (-1) at end.
-		public int get()
+		public override int get()
 		{
 			Debug.Assert(rpos <= wpos);
 			Debug.Assert(rpos == wpos || p != null);
@@ -146,11 +146,11 @@ namespace ZPAQSharp
 			Debug.Assert(rpos <= wpos);
 			Debug.Assert(wpos <= al);
 			Debug.Assert(!al == !p);
-			if (rpos + (U64)n > wpos)
+			if (rpos + (ulong)n > wpos)
 				n = wpos - rpos;
 			if (n > 0 && buf != null)
 				memcpy(buf, p + rpos, n);
-			rpos += (U64)n;
+			rpos += (ulong)n;
 			return n;
 		}
 

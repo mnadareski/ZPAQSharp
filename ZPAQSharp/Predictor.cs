@@ -5,10 +5,10 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-using U8 = System.Byte;
-using U16 = System.UInt16;
-using U32 = System.UInt32;
-using U64 = System.UInt64;
+using byte = System.Byte;
+using ushort = System.UInt16;
+using uint = System.UInt32;
+using ulong = System.UInt64;
 
 namespace ZPAQSharp
 {
@@ -19,10 +19,10 @@ namespace ZPAQSharp
 			c8 = 1;
 			hmap4 = 1;
 			this.z = z;
-			assert(sizeof(U8) == 1);
-			assert(sizeof(U16) == 2);
-			assert(sizeof(U32) == 4);
-			assert(sizeof(U64) == 8);
+			assert(sizeof(byte) == 1);
+			assert(sizeof(ushort) == 2);
+			assert(sizeof(uint) == 4);
+			assert(sizeof(ulong) == 8);
 			assert(sizeof(short) == 2);
 			assert(sizeof(int) == 4);
 			pcode = 0;
@@ -36,13 +36,13 @@ namespace ZPAQSharp
 		}
 
 		// Initialize the predictor with a new model in z
-		public void init() // build model
+		public unsafe void init() // build model
 		{
 			// Clear old JIT code if any
 			allocx(pcode, pcode_size, 0);
 
 			// Initialize context hash function
-			z.inith();
+			z.@inith();
 
 			// Initialize model independent tables
 			if (!initTables && isModeled())
@@ -68,7 +68,7 @@ namespace ZPAQSharp
 
 # ifndef NDEBUG
 				// Verify floating point math for squash() and stretch()
-				U32 sqsum = 0, stsum = 0;
+				uint sqsum = 0, stsum = 0;
 				for (int i = 32767; i >= 0; --i)
 					stsum = stsum * 3 + stretch(i);
 				for (int i = 4095; i >= 0; --i)
@@ -83,14 +83,14 @@ namespace ZPAQSharp
 
 			// Initialize components
 			for (int i = 0; i < 256; ++i)  // clear old model
-				comp[i].init();
+				comp[i].@init();
 			int n = z.header[6]; // hsize[0..1] hh hm ph pm n (comp)[n] END 0[128] (hcomp) END
-			const U8* cp = &z.header[7];  // start of component list
+			const byte* cp = &z.header[7];  // start of component list
 			for (int i = 0; i < n; ++i)
 			{
 				assert(cp < &z.header[z.cend]);
-				assert(cp > &z.header[0] && cp < &z.header[z.header.isize() - 8]);
-				Component & cr = comp[i];
+				assert(cp > &z.header[0] && cp < &z.header[z.header.Length - 8]);
+				Component cr = comp[i];
 				switch (cp[0])
 				{
 					case CONS:  // c
@@ -98,23 +98,23 @@ namespace ZPAQSharp
 						break;
 					case CM: // sizebits limit
 						if (cp[1] > 32) error("max size for CM is 32");
-						cr.cm.resize(1, cp[1]);  // packed CM (22 bits) + CMCOUNT (10 bits)
+						Array.Resize(ref cr.cm, 1, cp[1]);  // packed CM (22 bits) + CMCOUNT (10 bits)
 						cr.limit = cp[2] * 4;
-						for (size_t j = 0; j < cr.cm.size(); ++j)
+						for (size_t j = 0; j < cr.cm.Length; ++j)
 							cr.cm[j] = 0x80000000;
 						break;
 					case ICM: // sizebits
 						if (cp[1] > 26) error("max size for ICM is 26");
 						cr.limit = 1023;
-						cr.cm.resize(256);
-						cr.ht.resize(64, cp[1]);
-						for (size_t j = 0; j < cr.cm.size(); ++j)
+						Array.Resize(ref cr.cm, 256);
+						Array.Resize(ref cr.ht, 64, cp[1]);
+						for (size_t j = 0; j < cr.cm.Length; ++j)
 							cr.cm[j] = st.cminit(j);
 						break;
 					case MATCH:  // sizebits
 						if (cp[1] > 32 || cp[2] > 32) error("max size for MATCH is 32 32");
-						cr.cm.resize(1, cp[1]);  // index
-						cr.ht.resize(1, cp[2]);  // buf
+						Array.Resize(ref cr.cm, 1, cp[1]);  // index
+						Array.Resize(ref cr.ht, 1, cp[2]);  // buf
 						cr.ht(0) = 1;
 						break;
 					case AVG: // j k wt
@@ -126,8 +126,8 @@ namespace ZPAQSharp
 						if (cp[3] >= i) error("MIX2 k >= i");
 						if (cp[2] >= i) error("MIX2 j >= i");
 						cr.c = (size_t(1) << cp[1]); // size (number of contexts)
-						cr.a16.resize(1, cp[1]);  // wt[size][m]
-						for (size_t j = 0; j < cr.a16.size(); ++j)
+						Array.Resize(ref cr.a16, 1, cp[1]);  // wt[size][m]
+						for (size_t j = 0; j < cr.a16.Length; ++j)
 							cr.a16[j] = 32768;
 						break;
 					case MIX:
@@ -138,16 +138,16 @@ namespace ZPAQSharp
 							int m = cp[3];  // number of inputs
 							assert(m >= 1);
 							cr.c = (size_t(1) << cp[1]); // size (number of contexts)
-							cr.cm.resize(m, cp[1]);  // wt[size][m]
-							for (size_t j = 0; j < cr.cm.size(); ++j)
+							Array.Resize(ref cr.cm, m, cp[1]);  // wt[size][m]
+							for (size_t j = 0; j < cr.cm.Length; ++j)
 								cr.cm[j] = 65536 / m;
 							break;
 						}
 					case ISSE:  // sizebits j
 						if (cp[1] > 32) error("max size for ISSE is 32");
 						if (cp[2] >= i) error("ISSE j >= i");
-						cr.ht.resize(64, cp[1]);
-						cr.cm.resize(512);
+						Array.Resize(ref cr.ht, 64, cp[1]);
+						Array.Resize(ref cr.cm, 512);
 						for (int j = 0; j < 256; ++j)
 						{
 							cr.cm[j * 2] = 1 << 15;
@@ -158,9 +158,9 @@ namespace ZPAQSharp
 						if (cp[1] > 32) error("max size for SSE is 32");
 						if (cp[2] >= i) error("SSE j >= i");
 						if (cp[3] > cp[4] * 4) error("SSE start > limit*4");
-						cr.cm.resize(32, cp[1]);
+						Array.Resize(ref cr.cm, 32, cp[1]);
 						cr.limit = cp[4] * 4;
-						for (size_t j = 0; j < cr.cm.size(); ++j)
+						for (size_t j = 0; j < cr.cm.Length; ++j)
 							cr.cm[j] = squash((j & 31) * 64 - 992) << 17 | cp[3];
 						break;
 					default: error("unknown component type");
@@ -191,7 +191,7 @@ namespace ZPAQSharp
 					error("run JIT failed");
 			}
 			assert(pcode && pcode[0]);
-			return ((int(*)(Predictor *)) & pcode[10])(this);
+			return ((int(*)(Predictor)) & pcode[10])(this);
 #endif
 		}
 
@@ -203,7 +203,7 @@ namespace ZPAQSharp
 			update0(y);
 #else
 			assert(pcode && pcode[5]);
-			((void(*)(Predictor *, int)) & pcode[5])(this, y);
+			((void(*)(Predictor, int)) & pcode[5])(this, y);
 
 			// Save bit y in c8, hmap4 (not implemented in JIT)
 			c8 += c8 + y;
@@ -228,7 +228,7 @@ namespace ZPAQSharp
 
 		public bool isModeled() // n>0 components?
 		{
-			Debug.Assert(z.header.isize() > 6);
+			Debug.Assert(z.header.Length > 6);
 			return z.header[6] != 0;
 		}
 
@@ -236,7 +236,7 @@ namespace ZPAQSharp
 		private int c8;               // last 0...7 bits.
 		private int hmap4;            // c8 split into nibbles
 		private int[] p = new int[256];           // predictions
-		private U32[] h = new U32[256];           // unrolled copy of z.h
+		private uint[] h = new uint[256];           // unrolled copy of z.h
 		private ZPAQL z;              // VM to compute context hashes, includes H, n
 		private Component[] comp = new Component[256];  // the model, includes P
 		private bool initTables;      // are tables initialized?
@@ -250,12 +250,12 @@ namespace ZPAQSharp
 			// Predict next bit
 			int n = z.header[6];
 			assert(n > 0 && n <= 255);
-			const U8* cp = &z.header[7];
+			const byte* cp = &z.header[7];
 			assert(cp[-1] == n);
 			for (int i = 0; i < n; ++i)
 			{
-				assert(cp > &z.header[0] && cp < &z.header[z.header.isize() - 8]);
-				Component & cr = comp[i];
+				assert(cp > &z.header[0] && cp < &z.header[z.header.Length - 8]);
+				Component cr = comp[i];
 				switch (cp[0])
 				{
 					case CONS:  // c
@@ -272,12 +272,12 @@ namespace ZPAQSharp
 						break;
 					case MATCH: // sizebits bufbits: a=len, b=offset, c=bit, cxt=bitpos,
 								//                   ht=buf, limit=pos
-						assert(cr.cm.size() == (size_t(1) << cp[1]));
-						assert(cr.ht.size() == (size_t(1) << cp[2]));
+						assert(cr.cm.Length == (size_t(1) << cp[1]));
+						assert(cr.ht.Length == (size_t(1) << cp[2]));
 						assert(cr.a <= 255);
 						assert(cr.c == 0 || cr.c == 1);
 						assert(cr.cxt < 8);
-						assert(cr.limit < cr.ht.size());
+						assert(cr.limit < cr.ht.Length);
 						if (cr.a == 0) p[i] = 0;
 						else
 						{
@@ -292,7 +292,7 @@ namespace ZPAQSharp
 						{ // sizebits j k rate mask
 						  // c=size cm=wt[size] cxt=input
 							cr.cxt = ((h[i] + (c8 & cp[5])) & (cr.c - 1));
-							assert(cr.cxt < cr.a16.size());
+							assert(cr.cxt < cr.a16.Length);
 							int w = cr.a16[cr.cxt];
 							assert(w >= 0 && w < 65536);
 							p[i] = (w * p[cp[2]] + (65536 - w) * p[cp[3]]) >> 16;
@@ -306,7 +306,7 @@ namespace ZPAQSharp
 							assert(m >= 1 && m <= i);
 							cr.cxt = h[i] + (c8 & cp[5]);
 							cr.cxt = (cr.cxt & (cr.c - 1)) * m; // pointer to row of weights
-							assert(cr.cxt <= cr.cm.size() - m);
+							assert(cr.cxt <= cr.cm.Length - m);
 							int* wt = (int*)&cr.cm[cr.cxt];
 							p[i] = 0;
 							for (int j = 0; j < m; ++j)
@@ -358,13 +358,13 @@ namespace ZPAQSharp
 			assert(hmap4 >= 1 && hmap4 <= 511);
 
 			// Update components
-			const U8* cp = &z.header[7];
+			const byte* cp = &z.header[7];
 			int n = z.header[6];
 			assert(n >= 1 && n <= 255);
 			assert(cp[-1] == n);
 			for (int i = 0; i < n; ++i)
 			{
-				Component & cr = comp[i];
+				Component cr = comp[i];
 				switch (cp[0])
 				{
 					case CONS:  // c
@@ -375,7 +375,7 @@ namespace ZPAQSharp
 					case ICM:
 						{ // sizebits: cxt=ht[b]=bh, ht[c][0..15]=bh row, cxt=bh
 							cr.ht[cr.c + (hmap4 & 15)] = st.next(cr.ht[cr.c + (hmap4 & 15)], y);
-							U32 & pn = cr.cm(cr.cxt);
+							uint & pn = cr.cm(cr.cxt);
 							pn += int(y * 32767 - (pn >> 8)) >> 2;
 						}
 						break;
@@ -386,9 +386,9 @@ namespace ZPAQSharp
 							assert(cr.a <= 255);
 							assert(cr.c == 0 || cr.c == 1);
 							assert(cr.cxt < 8);
-							assert(cr.cm.size() == (size_t(1) << cp[1]));
-							assert(cr.ht.size() == (size_t(1) << cp[2]));
-							assert(cr.limit < cr.ht.size());
+							assert(cr.cm.Length == (size_t(1) << cp[1]));
+							assert(cr.ht.Length == (size_t(1) << cp[2]));
+							assert(cr.limit < cr.ht.Length);
 							if (int(cr.c) != y) cr.a = 0;  // mismatch?
 							cr.ht(cr.limit) += cr.ht(cr.limit) + y;
 							if (++cr.cxt == 8)
@@ -399,7 +399,7 @@ namespace ZPAQSharp
 								if (cr.a == 0)
 								{  // look for a match
 									cr.b = cr.limit - cr.cm(h[i]);
-									if (cr.b & (cr.ht.size() - 1))
+									if (cr.b & (cr.ht.Length - 1))
 										while (cr.a < 255
 											   && cr.ht(cr.limit - cr.a - 1) == cr.ht(cr.limit - cr.a - cr.b - 1))
 											++cr.a;
@@ -414,8 +414,8 @@ namespace ZPAQSharp
 					case MIX2:
 						{ // sizebits j k rate mask
 						  // cm=wt[size], cxt=input
-							assert(cr.a16.size() == cr.c);
-							assert(cr.cxt < cr.a16.size());
+							assert(cr.a16.Length == cr.c);
+							assert(cr.cxt < cr.a16.Length);
 							int err = (y * 32767 - squash(p[i])) * cp[4] >> 5;
 							int w = cr.a16[cr.cxt];
 							w += (err * (p[cp[2]] - p[cp[3]]) + (1 << 12)) >> 13;
@@ -429,8 +429,8 @@ namespace ZPAQSharp
 							// cm=wt[size][m], cxt=input
 							int m = cp[3];
 							assert(m > 0 && m <= i);
-							assert(cr.cm.size() == m * cr.c);
-							assert(cr.cxt + m <= cr.cm.size());
+							assert(cr.cm.Length == m * cr.c);
+							assert(cr.cxt + m <= cr.cm.Length);
 							int err = (y * 32767 - squash(p[i])) * cp[4] >> 4;
 							int* wt = (int*)&cr.cm[cr.cxt];
 							for (int j = 0; j < m; ++j)
@@ -455,7 +455,7 @@ namespace ZPAQSharp
 				}
 				cp += compsize[cp[0]];
 				assert(cp >= &z.header[7] && cp < &z.header[z.cend]
-					   && cp < &z.header[z.header.isize() - 8]);
+					   && cp < &z.header[z.header.Length - 8]);
 			}
 			assert(cp[0] == NONE);
 
@@ -476,23 +476,23 @@ namespace ZPAQSharp
 
 		private int[] dt2k = new int[256]; // division table for match: dt2k[i] = 2^12/i
 		private int[] dt = new int[1024]; // division table for cm: dt[i] = 2^16/(i+1.5)
-		private U16[] squasht = new U16[4096]; // squash() lookup table
+		private ushort[] squasht = new ushort[4096]; // squash() lookup table
 		private short[] stretcht = new short[32768]; // stretch() lookup table
 		private StateTable st; // next, cminit functions
-		private U8[] pcode; // JIT code for predict() and update()
+		private byte[] pcode; // JIT code for predict() and update()
 		private int pcode_size; // length of pcode
 
 		// reduce prediction error in cr.cm
 		private void train(Component cr, int y)
 		{
 			Debug.Assert(y == 0 || y == 1);
-			U32 pn = cr.cm.get(cr.cxt);
-			U32 count = pn & 0x3ff;
+			uint pn = cr.cm.get(cr.cxt);
+			uint count = pn & 0x3ff;
 			int error = y * 32767 - (int)(cr.cm.get(cr.cxt) >> 17);
 			pn += (uint)((error * dt[count] - 1024) + (count < cr.limit ? 1 : 0));
 		}
 
-		// x -> floor(32768/(1+exp(-x/64)))
+		// x . floor(32768/(1+exp(-x/64)))
 		private int squash(int x)
 		{
 			Debug.Assert(initTables);
@@ -500,7 +500,7 @@ namespace ZPAQSharp
 			return squasht[x + 2048];
 		}
 
-		// x -> round(64*log((x+0.5)/(32767.5-x))), approx inverse of squash
+		// x . round(64*log((x+0.5)/(32767.5-x))), approx inverse of squash
 		private int stretch(int x)
 		{
 			Debug.Assert(initTables);
@@ -547,12 +547,12 @@ namespace ZPAQSharp
 		// low sizebits of cxt with element 0 having the next higher 8 bits for
 		// collision detection. If not found after 3 adjacent tries, replace the
 		// row with lowest element 1 as priority. Return index of row.
-		private ulong find(Array<U8> ht, int sizebits, U32 cxt)
+		private ulong find(byte[] ht, int sizebits, uint cxt)
 		{
 			assert(initTables);
-			assert(ht.size() == size_t(16) << sizebits);
+			assert(ht.Length == size_t(16) << sizebits);
 			int chk = cxt >> sizebits & 255;
-			size_t h0 = (cxt * 16) & (ht.size() - 16);
+			size_t h0 = (cxt * 16) & (ht.Length - 16);
 			if (ht[h0] == chk) return h0;
 			size_t h1 = h0 ^ 16;
 			if (ht[h1] == chk) return h1;
@@ -578,17 +578,17 @@ namespace ZPAQSharp
 		// edi/rdi. The update bit y is placed in ebp/rbp.
 		private int assemble_p()
 		{
-			Predictor & pr = *this;
-			U8* rcode = pr.pcode;         // x86 output array
+			Predictor pr = this;
+			byte[] rcode = pr.pcode;        // x86 output array
 			int rcode_size = pcode_size;  // output size
 			int o = 0;                    // output index in pcode
-			const int S = sizeof(char*);  // 4 or 8
-			U8* hcomp = &pr.z.header[0];  // The code to translate
+			const int S = sizeof(char);  // 4 or 8
+			byte[] hcomp = pr.z.header[0];  // The code to translate
 #define off(x)  ((char*)&(pr.x)-(char*)&pr)
 #define offc(x) ((char*)&(pr.comp[i].x)-(char*)&pr)
 
 			// test for little-endian (probably x86)
-			U32 t = 0x12345678;
+			uint t = 0x12345678;
 			if (*(char*)&t != 0x78 || (S != 4 && S != 8))
 				error("JIT supported only for x86-32 and x86-64");
 
@@ -610,7 +610,7 @@ namespace ZPAQSharp
 
 			// Code predict() for each component
 			const int n = hcomp[6];  // number of components
-			U8* cp = hcomp + 7;
+			byte* cp = hcomp + 7;
 			for (int i = 0; i < n; ++i, cp += compsize[cp[0]])
 			{
 				if (cp - hcomp >= pr.z.cend) error("comp too big");
@@ -631,7 +631,7 @@ namespace ZPAQSharp
 						put2a(0x3387, off(hmap4));             // xor eax, [edi+&hmap4]
 						put1a(0x25, (1 << cp[1]) - 1);             // and eax, size-1
 						put2a(0x8987, offc(cxt));              // mov [edi+cxt], eax
-						if (S == 8) put1(0x48);                  // rex.w (esi->rsi)
+						if (S == 8) put1(0x48);                  // rex.w (esi.rsi)
 						put2a(0x8bb7, offc(cm));               // mov esi, [edi+&cm]
 						put3(0x8b0486);                        // mov eax, [esi+eax*4]
 						put3(0xc1e811);                        // shr eax, 17
@@ -658,10 +658,10 @@ namespace ZPAQSharp
 							  // collision detection. If not found after 3 adjacent tries, replace
 							  // row with lowest element 1 as priority. Return index of row.
 							  //
-							  // size_t Predictor::find(Array<U8>& ht, int sizebits, U32 cxt) {
-							  //  assert(ht.size()==size_t(16)<<sizebits);
+							  // size_t Predictor::find(byte[]& ht, int sizebits, uint cxt) {
+							  //  assert(ht.Length==size_t(16)<<sizebits);
 							  //  int chk=cxt>>sizebits&255;
-							  //  size_t h0=(cxt*16)&(ht.size()-16);
+							  //  size_t h0=(cxt*16)&(ht.Length-16);
 							  //  if (ht[h0]==chk) return h0;
 							  //  size_t h1=h0^16;
 							  //  if (ht[h1]==chk) return h1;
@@ -691,7 +691,7 @@ namespace ZPAQSharp
 						put3(0xc1e902 + cp[1]);                  // shr ecx, sizebits+2
 						put2a(0x81e1, 255);                    // and eax, 255 ; chk
 						put3(0xc1e004);                        // shl eax, 4
-						put1a(0x25, (64 << cp[1]) - 16);           // and eax, ht.size()-16 = h0
+						put1a(0x25, (64 << cp[1]) - 16);           // and eax, ht.Length-16 = h0
 						put3(0x3a0c06);                        // cmp cl, [esi+eax] ; ht[h0]
 						put2(0x744d);                          // je L3 ; match h0
 						put3(0x83f010);                        // xor eax, 16 ; h1
@@ -768,12 +768,12 @@ namespace ZPAQSharp
 
 					case MATCH: // sizebits bufbits: a=len, b=offset, c=bit, cxt=bitpos,
 								//                   ht=buf, limit=pos
-								// assert(cr.cm.size()==(size_t(1)<<cp[1]));
-								// assert(cr.ht.size()==(size_t(1)<<cp[2]));
+								// assert(cr.cm.Length==(size_t(1)<<cp[1]));
+								// assert(cr.ht.Length==(size_t(1)<<cp[2]));
 								// assert(cr.a<=255);
 								// assert(cr.c==0 || cr.c==1);
 								// assert(cr.cxt<8);
-								// assert(cr.limit<cr.ht.size());
+								// assert(cr.limit<cr.ht.Length);
 								// if (cr.a==0) p[i]=0;
 								// else {
 								//   cr.c=(cr.ht(cr.limit-cr.b)>>(7-cr.cxt))&1; // predicted bit
@@ -793,7 +793,7 @@ namespace ZPAQSharp
 						put2a(0x2b8f, offc(cxt));      // sub ecx, [edi+&cxt]
 						put2a(0x8b87, offc(limit));    // mov eax, [edi+&limit]
 						put2a(0x2b87, offc(b));        // sub eax, [edi+&b]
-						put1a(0x25, (1 << cp[2]) - 1);     // and eax, ht.size()-1
+						put1a(0x25, (1 << cp[2]) - 1);     // and eax, ht.Length-1
 						put4(0x0fb60406);              // movzx eax, byte [esi+eax]
 						put2(0xd3e8);                  // shr eax, cl
 						put3(0x83e001);                // and eax, 1  ; predicted bit
@@ -823,7 +823,7 @@ namespace ZPAQSharp
 					case MIX2:   // sizebits j k rate mask
 								 // c=size cm=wt[size] cxt=input
 								 // cr.cxt=((h[i]+(c8&cp[5]))&(cr.c-1));
-								 // assert(cr.cxt<cr.a16.size());
+								 // assert(cr.cxt<cr.a16.Length);
 								 // int w=cr.a16[cr.cxt];
 								 // assert(w>=0 && w<65536);
 								 // p[i]=(w*p[cp[2]]+(65536-w)*p[cp[3]])>>16;
@@ -853,7 +853,7 @@ namespace ZPAQSharp
 								 // assert(m>=1 && m<=i);
 								 // cr.cxt=h[i]+(c8&cp[5]);
 								 // cr.cxt=(cr.cxt&(cr.c-1))*m; // pointer to row of weights
-								 // assert(cr.cxt<=cr.cm.size()-m);
+								 // assert(cr.cxt<=cr.cm.Length-m);
 								 // int* wt=(int*)&cr.cm[cr.cxt];
 								 // p[i]=0;
 								 // for (int j=0; j<m; ++j)
@@ -1030,15 +1030,15 @@ namespace ZPAQSharp
 							   // reduce prediction error in cr.cm
 							   // void train(Component& cr, int y) {
 							   //   assert(y==0 || y==1);
-							   //   U32& pn=cr.cm(cr.cxt);
-							   //   U32 count=pn&0x3ff;
+							   //   uint& pn=cr.cm(cr.cxt);
+							   //   uint count=pn&0x3ff;
 							   //   int error=y*32767-(cr.cm(cr.cxt)>>17);
 							   //   pn+=(error*dt[count]&-1024)+(count<cr.limit);
 
-						if (S == 8) put1(0x48);          // rex.w (esi->rsi)
+						if (S == 8) put1(0x48);          // rex.w (esi.rsi)
 						put2a(0x8bb7, offc(cm));       // mov esi,[edi+cm]  ; cm
 						put2a(0x8b87, offc(cxt));      // mov eax,[edi+cxt] ; cxt
-						put1a(0x25, pr.comp[i].cm.size() - 1);  // and eax, size-1
+						put1a(0x25, pr.comp[i].cm.Length - 1);  // and eax, size-1
 						if (S == 8) put1(0x48);          // rex.w
 						put3(0x8d3486);                // lea esi,[esi+eax*4] ; &cm[cxt]
 						put2(0x8b06);                  // mov eax,[esi] ; cm[cxt]
@@ -1058,7 +1058,7 @@ namespace ZPAQSharp
 
 					case ICM:   // sizebits: cxt=bh, ht[c][0..15]=bh row
 								// cr.ht[cr.c+(hmap4&15)]=st.next(cr.ht[cr.c+(hmap4&15)], y);
-								// U32& pn=cr.cm(cr.cxt);
+								// uint& pn=cr.cm(cr.cxt);
 								// pn+=int(y*32767-(pn>>8))>>2;
 
 					case ISSE:  // sizebits j  -- c=hi, cxt=bh
@@ -1139,8 +1139,8 @@ namespace ZPAQSharp
 								// assert(cr.a<=255);
 								// assert(cr.c==0 || cr.c==1);
 								// assert(cr.cxt<8);
-								// assert(cr.cm.size()==(size_t(1)<<cp[1]));
-								// assert(cr.ht.size()==(size_t(1)<<cp[2]));
+								// assert(cr.cm.Length==(size_t(1)<<cp[1]));
+								// assert(cr.ht.Length==(size_t(1)<<cp[2]));
 								// if (int(cr.c)!=y) cr.a=0;  // mismatch?
 								// cr.ht(cr.limit)+=cr.ht(cr.limit)+y;
 								// if (++cr.cxt==8) {
@@ -1149,7 +1149,7 @@ namespace ZPAQSharp
 								//   cr.limit&=(1<<cp[2])-1;
 								//   if (cr.a==0) {  // look for a match
 								//     cr.b=cr.limit-cr.cm(h[i]);
-								//     if (cr.b&(cr.ht.size()-1))
+								//     if (cr.b&(cr.ht.Length-1))
 								//       while (cr.a<255
 								//              && cr.ht(cr.limit-cr.a-1)==cr.ht(cr.limit-cr.a-cr.b-1))
 								//         ++cr.a;
@@ -1247,8 +1247,8 @@ namespace ZPAQSharp
 
 					case MIX2: // sizebits j k rate mask
 							   // cm=wt[size], cxt=input
-							   // assert(cr.a16.size()==cr.c);
-							   // assert(cr.cxt<cr.a16.size());
+							   // assert(cr.a16.Length==cr.c);
+							   // assert(cr.cxt<cr.a16.Length);
 							   // int err=(y*32767-squash(p[i]))*cp[4]>>5;
 							   // int w=cr.a16[cr.cxt];
 							   // w+=(err*(p[cp[2]]-p[cp[3]])+(1<<12))>>13;
@@ -1293,8 +1293,8 @@ namespace ZPAQSharp
 							  // cm=wt[size][m], cxt=input
 							  // int m=cp[3];
 							  // assert(m>0 && m<=i);
-							  // assert(cr.cm.size()==m*cr.c);
-							  // assert(cr.cxt+m<=cr.cm.size());
+							  // assert(cr.cm.Length==m*cr.c);
+							  // assert(cr.cxt+m<=cr.cm.Length);
 							  // int err=(y*32767-squash(p[i]))*cp[4]>>4;
 							  // int* wt=(int*)&cr.cm[cr.cxt];
 							  // for (int j=0; j<m; ++j)
@@ -1525,7 +1525,7 @@ namespace ZPAQSharp
 
 		// ssquasht[i]=int(32768.0/(1+exp((i-2048)*(-1.0/64))));
 		// Middle 1344 of 4096 entries only.
-		static U16[] ssquasht = new U16[1344] {
+		static ushort[] ssquasht = new ushort[1344] {
 	 0,     0,     0,     0,     0,     0,     0,     1,
 	 1,     1,     1,     1,     1,     1,     1,     1,
 	 1,     1,     1,     1,     1,     1,     1,     1,
@@ -1697,7 +1697,7 @@ namespace ZPAQSharp
 };
 
 		// stdt[i]=count of -i or i in botton or top of stretcht[]
-		static U8[] stdt = new U8[712] {
+		static byte[] stdt = new byte[712] {
 	64,   128,   128,   128,   128,   128,   127,   128,
    127,   128,   127,   127,   127,   127,   126,   126,
    126,   126,   126,   125,   125,   124,   125,   124,

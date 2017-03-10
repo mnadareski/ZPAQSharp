@@ -4,10 +4,10 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-using U8 = System.Byte;
-using U16 = System.UInt16;
-using U32 = System.UInt32;
-using U64 = System.UInt64;
+using byte = System.Byte;
+using ushort = System.UInt16;
+using uint = System.UInt32;
+using ulong = System.UInt64;
 
 namespace ZPAQSharp
 {
@@ -24,7 +24,7 @@ namespace ZPAQSharp
 		}
 
 		// Read 16 bit little-endian number
-		public static int toU16(string p)
+		public static int toushort(string p)
 		{
 			return (p[0] & 255) + 256 * (p[1] & 255);
 		}
@@ -33,34 +33,33 @@ namespace ZPAQSharp
 		// The first byte will not be 'z' or '7' (start of a ZPAQ archive).
 		// For a pure random number, discard the first byte.
 		// In VC++, must link to advapi32.lib.
-		public static void random(ref char[] buf, int n)
+		public static void Random(ref char[] buf, int n)
 		{
-# ifdef unix
-			FILE * in= fopen("/dev/urandom", "rb");
-			if (in && int(fread(buf, 1, n, in)) == n)
-    fclose(in);
-  else {
-				error("key generation failed");
-			}
-#else
-			HCRYPTPROV h;
-			if (CryptAcquireContext(&h, NULL, NULL, PROV_RSA_FULL,
-				CRYPT_VERIFYCONTEXT) && CryptGenRandom(h, n, (BYTE*)buf))
-				CryptReleaseContext(h, 0);
-			else
+			Random random = new Random();
+			byte[] bytebuf = new byte[n];
+			random.NextBytes(bytebuf);
+
+			if (n >= 1 && (bytebuf[0] == 'z' || bytebuf[0] == '7'))
 			{
-				fprintf(stderr, "CryptGenRandom: error %d\n", int(GetLastError()));
-				error("key generation failed");
+				bytebuf[0] ^= 0x80;
 			}
-#endif
-			if (n >= 1 && (buf[0] == 'z' || buf[0] == '7'))
-				buf[0] ^= 0x80;
+
+			buf = bytebuf.Select(b => (char)b).ToArray();
 		}
 
 		// Symbolic constants, instruction size, and names
 		public enum CompType
 		{
-			NONE, CONS, CM, ICM, MATCH, AVG, MIX2, MIX, ISSE, SSE
+			NONE,
+			CONS,
+			CM,
+			ICM,
+			MATCH,
+			AVG,
+			MIX2,
+			MIX,
+			ISSE,
+			SSE
 		}
 
 		static void decompress(Reader @in, Writer @out)
@@ -82,11 +81,11 @@ namespace ZPAQSharp
 		// Compress in to out in multiple blocks. Default method is "14,128,0"
 		// Default filename is "". Comment is appended to input size.
 		// dosha1 means save the SHA-1 checksum.
-		static void compress(Reader @in, Writer @out, string method, string filename = null, string comment = null, bool dosha1 = true)
+		static void Compress(Reader @in, Writer @out, string method, string filename = null, string comment = null, bool dosha1 = true)
 		{
 			// Get block size
 			int bs = 4;
-			if (method && method[0] && method[1] >= '0' && method[1] <= '9')
+			if (method != null && method[0] != '\0' && method[1] >= '0' && method[1] <= '9')
 			{
 				bs = method[1] - '0';
 				if (method[2] >= '0' && method[2] <= '9') bs = bs * 10 + method[2] - '0';
@@ -95,15 +94,16 @@ namespace ZPAQSharp
 			bs = (0x100000 << bs) - 4096;
 
 			// Compress in blocks
-			StringBuffer sb(bs);
-			sb.write(0, bs);
+			StringBuffer sb = new StringBuffer((ulong)bs);
+			sb.write(null, bs);
 			int n = 0;
-			while (in && (n =in->read((char*)sb.data(), bs))> 0) {
-				sb.resize(n);
-				compressBlock(&sb, out, method, filename, comment, dosha1);
-				filename = 0;
-				comment = 0;
-				sb.resize(0);
+			while (@in != null && (n = @in.read(sb.data().Select(b => (char)b).ToArray(), bs)) >  0)
+			{
+				Array.Resize(ref sb, (ulong)n);
+				compressBlock(sb, out, method, filename, comment, dosha1);
+				filename = null;
+				comment = null;
+				Array.Resize(ref sb, 0);
 			}
 		}
 
@@ -120,8 +120,8 @@ namespace ZPAQSharp
 			assert(out);
 			assert(method_);
 			assert(method_[0]);
-			std::string method = method_;
-			const unsigned n =in->size();  // input size
+			string method = method_;
+			const unsigned n =in.Length;  // input size
 			const int arg0 = MAX(lg(n + 4095) - 20, 0);  // block size
 			assert((1u << (arg0 + 20)) >= n + 4096);
 
@@ -131,7 +131,7 @@ namespace ZPAQSharp
 			if (isdigit(method[0]))
 			{
 				int commas = 0, arg[4] = { 0 };
-				for (int i = 1; i < int(method.size()) && commas < 4; ++i)
+				for (int i = 1; i < int(method.Length) && commas < 4; ++i)
 				{
 					if (method[i] == ',' || method[i] == '.') ++commas;
 					else if (isdigit(method[i])) arg[commas] = arg[commas] * 10 + method[i] - '0';
@@ -150,7 +150,7 @@ namespace ZPAQSharp
 				if (dosha1)
 				{
 #endif
-					sha1.write(in->c_str(), n);
+					sha1.write(in.c_str(), n);
 					sha1ptr = sha1.result();
 				}
 
@@ -163,8 +163,8 @@ namespace ZPAQSharp
 					// build models
 					const int doe8 = (type & 2) * 2;
 					method = "x" + itos(arg0);
-					std::string htsz = "," + itos(19 + arg0 + (arg0 <= 6));  // lz77 hash table size
-					std::string sasz = "," + itos(21 + arg0);            // lz77 suffix array size
+					string htsz = "," + itos(19 + arg0 + (arg0 <= 6));  // lz77 hash table size
+					string sasz = "," + itos(21 + arg0);            // lz77 suffix array size
 
 					// store uncompressed
 					if (level == 0)
@@ -243,7 +243,7 @@ namespace ZPAQSharp
 						const int NR = 1 << 12;
 						int pt[256] = { 0 };  // position of last occurrence
 						int r[NR] = { 0 };    // count repetition gaps of length r
-						const unsigned char* p =in->data();
+						const unsigned char* p =in.data();
 						if (level > 0)
 						{
 							for (unsigned i = 0; i < n; ++i)
@@ -283,9 +283,9 @@ namespace ZPAQSharp
 				}
 
 				// Compress
-				std::string config;
+				string config;
 				int args[9] = { 0 };
-				config = makeConfig(method.c_str(), args);
+				config = makeConfig(method.ToCharArray(), args);
 				assert(n <= (0x100000u << args[0]) - 4096);
 				libzpaq::Compressor co;
 				co.setOutput(out);
@@ -294,25 +294,25 @@ namespace ZPAQSharp
 #endif
 				StringBuffer pcomp_cmd;
 				co.writeTag();
-				co.startBlock(config.c_str(), args, &pcomp_cmd);
-				std::string cs = itos(n);
+				co.startBlock(config.ToCharArray(), args, &pcomp_cmd);
+				string cs = itos(n);
 				if (comment) cs = cs + " " + comment;
-				co.startSegment(filename, cs.c_str());
+				co.startSegment(filename, cs.ToCharArray());
 				if (args[1] >= 1 && args[1] <= 7 && args[1] != 4)
 				{  // LZ77 or BWT
-					LZBuffer lz(*in, args);
+					LZBuffer lz = new LZBuffer(@in, args);
 					co.setInput(&lz);
 					co.compress();
 				}
 				else
 				{  // compress with e8e9 or no preprocessing
 					if (args[1] >= 4 && args[1] <= 7)
-						e8e9(in->data(), in->size());
+						e8e9(in.data(), in.Length);
 					co.setInput(in);
 					co.compress();
 				}
 # ifdef DEBUG  // verify pre-post processing are inverses
-				int64_t outsize;
+				long outsize;
 				const char* sha1result = co.endSegmentChecksum(&outsize, dosha1);
 				assert(sha1result);
 				assert(sha1ptr);
@@ -329,7 +329,7 @@ namespace ZPAQSharp
 		// allocated memory first. If newsize is 0 then free only.
 		// Call error in case of failure. If NOJIT, ignore newsize
 		// and set p=0, n=0 without allocating memory.
-		void allocx(ref U8[] p, ref int n, int newsize)
+		void allocx(ref byte[] p, ref int n, int newsize)
 		{
 			if (p != null || n != 0)
 			{
@@ -342,7 +342,7 @@ namespace ZPAQSharp
 			}
 			if (newsize > 0)
 			{
-				p = (U8*)mmap(0, newsize, PROT_READ | PROT_WRITE | PROT_EXEC,
+				p = (byte*)mmap(0, newsize, PROT_READ | PROT_WRITE | PROT_EXEC,
 							MAP_PRIVATE | MAP_ANON, -1, 0);
 				if ((void*)p == MAP_FAILED)
 					p = null;
@@ -357,12 +357,12 @@ namespace ZPAQSharp
 		}
 
 		// Convert non-negative decimal number x to string of at least n digits
-		std::string itos(int64_t x, int n = 1)
+		string itos(long x, int n = 1)
 		{
 			assert(x >= 0);
 			assert(n >= 0);
-			std::string r;
-			for (; x || n > 0; x /= 10, --n) r = std::string(1, '0' + x % 10) + r;
+			string r;
+			for (; x || n > 0; x /= 10, --n) r = string(1, '0' + x % 10) + r;
 			return r;
 		}
 
@@ -385,24 +385,28 @@ namespace ZPAQSharp
 
 		// Generate a config file from the method argument with syntax:
 		// {0|x|s|i}[N1[,N2]...][{ciamtswf<cfg>}[N1[,N2]]...]...
-		std::string makeConfig(const char* method, int args[]) {
-  assert(method);
-		const char type = method[0];
-  assert(type=='x' || type=='s' || type=='0' || type=='i');
+		string makeConfig(char[] method, int args[])
+		{
+			assert(method);
+			char type = method[0];
+			assert(type=='x' || type=='s' || type=='0' || type=='i');
 
-		// Read "{x|s|i|0}N1,N2...N9" into args[0..8] ($1..$9)
-		args[0]=0;  // log block size in MiB
-  args[1]=0;  // 0=none, 1=var-LZ77, 2=byte-LZ77, 3=BWT, 4..7 adds E8E9
-  args[2]=0;  // lz77 minimum match length
-  args[3]=0;  // secondary context length
-  args[4]=0;  // log searches
-  args[5]=0;  // lz77 hash table size or SA if args[0]+21
-  args[6]=0;  // secondary context look ahead
-  args[7]=0;  // not used
-  args[8]=0;  // not used
-  if (isdigit(*++method)) args[0]=0;
-  for (int i=0; i<9 && (isdigit(* method) || *method==',' || *method=='.');) {
-    if (isdigit(* method))
+			// Read "{x|s|i|0}N1,N2...N9" into args[0..8] ($1..$9)
+			args[0]=0;  // log block size in MiB
+			args[1]=0;  // 0=none, 1=var-LZ77, 2=byte-LZ77, 3=BWT, 4..7 adds E8E9
+			args[2]=0;  // lz77 minimum match length
+			args[3]=0;  // secondary context length
+			args[4]=0;  // log searches
+			args[5]=0;  // lz77 hash table size or SA if args[0]+21
+			args[6]=0;  // secondary context look ahead
+			args[7]=0;  // not used
+			args[8]=0;  // not used
+			if (isdigit(*++method))
+			{
+				args[0] = 0;
+			}
+			for (int i=0; i<9 && (isdigit(* method) || *method==',' || *method=='.');) {
+			if (isdigit(* method))
       args[i]=args[i]*10+*method-'0';
     else if (++i<9)
 
@@ -415,7 +419,7 @@ namespace ZPAQSharp
     return "comp 0 0 0 0 0 hcomp end\n";
 
   // Generate the postprocessor
-  std::string hdr, pcomp;
+  string hdr, pcomp;
 	const int level = args[1] & 3;
 	const bool doe8 = args[1] >= 4 && args[1] <= 7;
 
@@ -482,7 +486,7 @@ namespace ZPAQSharp
     "    endif\n"
     "  endif\n"
     "\n"
-    "  (while state==1 && n>=3 (expect match length n*4+ll -> r2))\n"
+    "  (while state==1 && n>=3 (expect match length n*4+ll . r2))\n"
     "  do a=r 1 a== 1 if a=d a> 2 if\n"
     "    a=c a&= 1 a== 1 if         (if bits&1)\n"
     "      a=c a>>= 1 c=a             (bits>>=1)\n"
@@ -838,8 +842,8 @@ namespace ZPAQSharp
 int ncomp = 0;  // number of components
 const int membits = args[0] + 20;
 int sb = 5;  // bits in last context
-std::string comp;
-std::string hcomp = "hcomp\n"
+string comp;
+string hcomp = "hcomp\n"
     "c-- *c=a a+= 255 d=a *d=c\n";
   if (level==2) {  // put level 2 lz77 parse state in R1, R2
     hcomp+=
@@ -883,12 +887,12 @@ v.push_back(* method++);
     // N2: 1..255=offset mod N2. 1000..1255=distance to N2-1000
     // N3...: 0..255=byte mask + 256=lz77 state. 1000+=run of N3-1000 zeros.
     if (v[0]=='c') {
-      while (v.size()<3) v.push_back(0);
+      while (v.Length<3) v.push_back(0);
       comp+=itos(ncomp)+" ";
       sb=11;  // count context bits
       if (v[2]<256) sb+=lg(v[2]);
       else sb+=6;
-      for (unsigned i=3; i<v.size(); ++i)
+      for (unsigned i=3; i<v.Length; ++i)
         if (v[i]<512) sb+=nbits(v[i])*3/4;
       if (sb>membits) sb=membits;
       if (v[1]%1000==0) comp+="icm "+itos(sb-6-v[1]/1000)+"\n";
@@ -909,7 +913,7 @@ v.push_back(* method++);
 			   itos(ncomp)+" hashd\n";
 
       // Masked context
-      for (unsigned i=3; i<v.size(); ++i) {
+      for (unsigned i=3; i<v.Length; ++i) {
         if (i==3) hcomp+="b=c ";
         if (v[i]==255)
           hcomp+="a=*b hashd\n";  // ordinary byte
@@ -935,7 +939,7 @@ hcomp+=" hashd\n"
           " a+=b b=a\n";
         else if (v[i]>1000)
           hcomp+="a= "+itos(v[i]-1000)+" a+=b b=a\n";
-        if (v[i]<512 && i<v.size()-1)
+        if (v[i]<512 && i<v.Length-1)
           hcomp+="b++ ";
       }
       ++ncomp;
@@ -945,9 +949,9 @@ hcomp+=" hashd\n"
     // t,8,24: MIX2, size, rate
     // s,8,32,255: SSE, size, start, limit
     if (strchr("mts", v[0]) && ncomp>int (v[0]=='t')) {
-      if (v.size()<=1) v.push_back(8);
-      if (v.size()<=2) v.push_back(24+8* (v[0]=='s'));
-      if (v[0]=='s' && v.size()<=3) v.push_back(255);
+      if (v.Length<=1) v.push_back(8);
+      if (v.Length<=2) v.push_back(24+8* (v[0]=='s'));
+      if (v[0]=='s' && v.Length<=3) v.push_back(255);
       comp+=itos(ncomp);
 sb=5+v[1]*3/4;
       if (v[0]=='m')
@@ -977,14 +981,14 @@ sb=5+v[1]*3/4;
 
 	  assert(sb>=5);
 hcomp+="d= "+itos(ncomp-1)+" b=c a=*d d++\n";
-      for (unsigned i=1; i<v.size() && ncomp<254; ++i) {
+      for (unsigned i=1; i<v.Length && ncomp<254; ++i) {
         for (int j=0; j<v[i]%10; ++j) {
           hcomp+="hash ";
-          if (i<v.size()-1 || j<v[i]%10-1) hcomp+="b++ ";
+          if (i<v.Length-1 || j<v[i]%10-1) hcomp+="b++ ";
           sb+=6;
         }
         hcomp+="*d=a";
-        if (i<v.size()-1) hcomp+=" d++";
+        if (i<v.Length-1) hcomp+=" d++";
         hcomp+="\n";
         if (sb>membits) sb=membits;
         comp+=itos(ncomp)+" isse "+itos(sb-6-v[i]/10)+" "+itos(ncomp-1)+"\n";
@@ -994,8 +998,8 @@ hcomp+="d= "+itos(ncomp-1)+" b=c a=*d d++\n";
 
     // a24,0,0: MATCH. N1=hash multiplier. N2,N3=halve buf, table.
     if (v[0]=='a') {
-      if (v.size()<=1) v.push_back(24);
-      while (v.size()<4) v.push_back(0);
+      if (v.Length<=1) v.push_back(24);
+      while (v.Length<4) v.push_back(0);
       comp+=itos(ncomp)+" match "+itos(membits-v[3]-2)+" "
           +itos(membits-v[2])+"\n";
       hcomp+="d= "+itos(ncomp)+" a=*d a*= "+itos(v[1])
@@ -1009,12 +1013,12 @@ hcomp+="d= "+itos(ncomp-1)+" b=c a=*d d++\n";
     // Word is hashed by: hash := hash*N5+c+1
     // Decrease memory by 2^-N6.
     if (v[0]=='w') {
-      if (v.size()<=1) v.push_back(1);
-      if (v.size()<=2) v.push_back(65);
-      if (v.size()<=3) v.push_back(26);
-      if (v.size()<=4) v.push_back(223);
-      if (v.size()<=5) v.push_back(20);
-      if (v.size()<=6) v.push_back(0);
+      if (v.Length<=1) v.push_back(1);
+      if (v.Length<=2) v.push_back(65);
+      if (v.Length<=3) v.push_back(26);
+      if (v.Length<=4) v.push_back(223);
+      if (v.Length<=5) v.push_back(20);
+      if (v.Length<=6) v.push_back(0);
       comp+=itos(ncomp)+" icm "+itos(membits-6-v[6])+"\n";
       for (int i=1; i<v[1]; ++i)
         comp+=itos(ncomp+i)+" isse "+itos(membits-6-v[6])+" "

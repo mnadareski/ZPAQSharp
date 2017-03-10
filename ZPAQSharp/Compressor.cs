@@ -76,25 +76,25 @@ namespace ZPAQSharp
 			if (level < 1) error("compression level must be at least 1");
 			const char* p = models;
 			int i;
-			for (i = 1; i < level && toU16(p); ++i)
-				p += toU16(p) + 2;
-			if (toU16(p) < 1) error("compression level too high");
+			for (i = 1; i < level && toushort(p); ++i)
+				p += toushort(p) + 2;
+			if (toushort(p) < 1) error("compression level too high");
 			startBlock(p);
 		}
 
 		public void startBlock(char[] hcomp) // ZPAQL byte code
 		{
 			assert(state == INIT);
-			MemoryReader m(hcomp);
+			MemoryReader m = new MemoryReader(hcomp, 0);
 			z.read(&m);
 			pz.sha1 = &sha1;
-			assert(z.header.isize() > 6);
-			enc.out->put('z');
-			enc.out->put('P');
-			enc.out->put('Q');
-			enc.out->put(1 + (z.header[6] == 0));  // level 1 or 2
-			enc.out->put(1);
-			z.write(enc.out, false);
+			assert(z.header.Length > 6);
+			enc.@out.put('z');
+			enc.@out.put('P');
+			enc.@out.put('Q');
+			enc.@out.put(1 + (z.header[6] == 0));  // level 1 or 2
+			enc.@out.put(1);
+			z.write(enc.@out, false);
 			state = BLOCK1;
 		}
 
@@ -105,13 +105,13 @@ namespace ZPAQSharp
 			assert(state == INIT);
 			Compiler(config, args, z, pz, pcomp_cmd);
 			pz.sha1 = &sha1;
-			assert(z.header.isize() > 6);
-			enc.out->put('z');
-			enc.out->put('P');
-			enc.out->put('Q');
-			enc.out->put(1 + (z.header[6] == 0));  // level 1 or 2
-			enc.out->put(1);
-			z.write(enc.out, false);
+			assert(z.header.Length > 6);
+			enc.@out.put('z');
+			enc.@out.put('P');
+			enc.@out.put('Q');
+			enc.@out.put(1 + (z.header[6] == 0));  // level 1 or 2
+			enc.@out.put(1);
+			z.write(enc.@out, false);
 			state = BLOCK1;
 		}
 
@@ -157,13 +157,13 @@ namespace ZPAQSharp
 		{
 			if (state == SEG2) return;
 			assert(state == SEG1);
-			enc.init();
+			enc.@init();
 			if (!pcomp)
 			{
 				len = pz.hend - pz.hbegin;
 				if (len > 0)
 				{
-					assert(pz.header.isize() > pz.hend);
+					assert(pz.header.Length > pz.hend);
 					assert(pz.hbegin >= 0);
 					pcomp = (const char*)&pz.header[pz.hbegin];
 				}
@@ -171,7 +171,7 @@ namespace ZPAQSharp
 			}
 			else if (len == 0)
 			{
-				len = toU16(pcomp);
+				len = toushort(pcomp);
 				pcomp += 2;
 			}
 			if (len > 0)
@@ -182,7 +182,7 @@ namespace ZPAQSharp
 				for (int i = 0; i < len; ++i)
 					enc.compress(pcomp[i] & 255);
 				if (verify)
-					pz.initp();
+					pz.@initp();
 			}
 			else
 				enc.compress(0);
@@ -202,13 +202,13 @@ namespace ZPAQSharp
 			{
 				int nbuf = BUFSIZE;  // bytes read into buf
 				if (n >= 0 && n < nbuf) nbuf = n;
-				int nr =in->read(buf, nbuf);
+				int nr =in.read(buf, nbuf);
 				if (nr < 0 || nr > BUFSIZE || nr > nbuf) error("invalid read size");
 				if (nr <= 0) return false;
 				if (n >= 0) n -= nr;
 				for (int i = 0; i < nr; ++i)
 				{
-					int ch = U8(buf[i]);
+					int ch = byte(buf[i]);
 					enc.compress(ch);
 					if (verify)
 					{
@@ -232,18 +232,18 @@ namespace ZPAQSharp
 				pz.run(-1);
 				pz.flush();
 			}
-			enc.out->put(0);
-			enc.out->put(0);
-			enc.out->put(0);
-			enc.out->put(0);
+			enc.@out.put(0);
+			enc.@out.put(0);
+			enc.@out.put(0);
+			enc.@out.put(0);
 			if (sha1string)
 			{
-				enc.out->put(253);
+				enc.@out.put(253);
 				for (int i = 0; i < 20; ++i)
-					enc.out->put(sha1string[i]);
+					enc.@out.put(sha1string[i]);
 			}
 			else
-				enc.out->put(254);
+				enc.@out.put(254);
 			state = BLOCK2;
 		}
 
@@ -259,10 +259,10 @@ namespace ZPAQSharp
 				pz.run(-1);
 				pz.flush();
 			}
-			enc.out->put(0);
-			enc.out->put(0);
-			enc.out->put(0);
-			enc.out->put(0);
+			enc.@out.put(0);
+			enc.@out.put(0);
+			enc.@out.put(0);
+			enc.@out.put(0);
 			if (verify)
 			{
 				if (size) *size = sha1.usize();
@@ -270,12 +270,12 @@ namespace ZPAQSharp
 			}
 			if (verify && dosha1)
 			{
-				enc.out->put(253);
+				enc.@out.put(253);
 				for (int i = 0; i < 20; ++i)
-					enc.out->put(sha1result[i]);
+					enc.@out.put(sha1result[i]);
 			}
 			else
-				enc.out->put(254);
+				enc.@out.put(254);
 			state = BLOCK2;
 			return verify ? sha1result : 0;
 		}
@@ -294,7 +294,7 @@ namespace ZPAQSharp
 		public void endBlock()
 		{
 			assert(state == BLOCK2);
-			enc.out->put(255);
+			enc.@out.put(255);
 			state = INIT;
 		}
 
@@ -313,16 +313,29 @@ namespace ZPAQSharp
 
 		private enum State
 		{
-			INIT, BLOCK1, SEG1, BLOCK2, SEG2
+			INIT,
+			BLOCK1,
+			SEG1,
+			BLOCK2,
+			SEG2
 		}
 
 		// Memory reader
-		class MemoryReader : public Reader {
-  const char* p;
-		public:
-  MemoryReader(const char* p_): p(p_) { }
-		int get() { return *p++ & 255; }
-	};
+		private class MemoryReader : Reader
+		{
+			private char[] p;
+			private int pptr;
 
-}
+			public MemoryReader(char[] p_, int pptr)
+			{
+				p = p_;
+				this.pptr = pptr;
+			}
+
+			public int Get()
+			{
+				return p[pptr] & 255;
+			}
+		}
+	}
 }

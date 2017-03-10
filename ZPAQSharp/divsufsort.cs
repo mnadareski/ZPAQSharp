@@ -1136,18 +1136,18 @@ static INLINE
 void
 trbudget_init(trbudget_t* budget, int chance, int incval)
 {
-	budget->chance = chance;
-	budget->remain = budget->incval = incval;
+	budget.chance = chance;
+	budget.remain = budget.@incval = incval;
 }
 
 static INLINE
 int
 trbudget_check(trbudget_t* budget, int size)
 {
-	if (size <= budget->remain) { budget->remain -= size; return 1; }
-	if (budget->chance == 0) { budget->count += size; return 0; }
-	budget->remain += budget->incval - size;
-	budget->chance -= 1;
+	if (size <= budget.remain) { budget.remain -= size; return 1; }
+	if (budget.chance == 0) { budget.count += size; return 0; }
+	budget.remain += budget.@incval - size;
+	budget.chance -= 1;
 	return 1;
 }
 

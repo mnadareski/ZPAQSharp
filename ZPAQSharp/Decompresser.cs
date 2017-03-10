@@ -31,7 +31,7 @@ namespace ZPAQSharp
 			assert(state == BLOCK);
 
 			// Find start of block
-			U32 h1 = 0x3D49B113, h2 = 0x29EB7F93, h3 = 0x2614BE13, h4 = 0x3828EB13;
+			uint h1 = 0x3D49B113, h2 = 0x29EB7F93, h3 = 0x2614BE13, h4 = 0x3828EB13;
 			// Rolling hashes initialized to hash of first 13 bytes
 			int c;
 			while ((c = dec.get()) != -1)
@@ -49,7 +49,7 @@ namespace ZPAQSharp
 			if ((c = dec.get()) != 1 && c != 2) error("unsupported ZPAQ level");
 			if (dec.get() != 1) error("unsupported ZPAQL type");
 			z.read(&dec);
-			if (c == 1 && z.header.isize() > 6 && z.header[6] == 0)
+			if (c == 1 && z.header.Length > 6 && z.header[6] == 0)
 				error("ZPAQ level 1 requires at least 1 component");
 			if (memptr) *memptr = z.memory();
 			state = FILENAME;
@@ -79,7 +79,7 @@ namespace ZPAQSharp
 						state = COMMENT;
 						return true;
 					}
-					if (filename) filename->put(c);
+					if (filename) filename.put(c);
 				}
 			}
 			else if (c == 255)
@@ -102,7 +102,7 @@ namespace ZPAQSharp
 				int c = dec.get();
 				if (c == -1) error("unexpected EOF");
 				if (c == 0) break;
-				if (comment) comment->put(c);
+				if (comment) comment.put(c);
 			}
 			if (dec.get() != 0) error("missing reserved byte");
 		}
@@ -127,9 +127,9 @@ namespace ZPAQSharp
 			// Initialize models to start decompressing block
 			if (decode_state == FIRSTSEG)
 			{
-				dec.init();
-				assert(z.header.size() > 5);
-				pp.init(z.header[4], z.header[5]);
+				dec.@init();
+				assert(z.header.Length > 5);
+				pp.@init(z.header[4], z.header[5]);
 				decode_state = SEG;
 			}
 

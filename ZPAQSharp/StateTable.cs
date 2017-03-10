@@ -5,20 +5,20 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-using U8 = System.Byte;
-using U16 = System.UInt16;
-using U32 = System.UInt32;
-using U64 = System.UInt64;
+using byte = System.Byte;
+using ushort = System.UInt16;
+using uint = System.UInt32;
+using ulong = System.UInt64;
 
 namespace ZPAQSharp
 {
 	// Next state table
 	class StateTable
 	{
-		// state*4 -> next state if 0, if 1, n0, n1
-		public U8[] ns = new U8[1024];
+		// state*4 . next state if 0, if 1, n0, n1
+		public byte[] ns = new byte[1024];
 
-		private U8[] sns = new U8[1024]  {
+		private byte[] sns = new byte[1024]  {
 			 1,     2,     0,     0,     3,     5,     1,     0,
 			 4,     6,     0,     1,     7,     9,     2,     0,
 			 8,    11,     1,     1,     8,    11,     1,     1,
