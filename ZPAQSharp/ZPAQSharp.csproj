@@ -41,7 +41,6 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Array.cs" />
     <Compile Include="Compiler.cs" />
     <Compile Include="Component.cs" />
     <Compile Include="Compressor.cs" />
