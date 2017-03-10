@@ -157,8 +157,40 @@ namespace ZPAQSharp
 			return pp.z.write(out2, true);
 		}
 
+		// Read end of block. If a SHA1 checksum is present, write 1 and the
+		// 20 byte checksum into sha1string, else write 0 in first byte.
+		// If sha1string is 0 then discard it.
 		public void readSegmentEnd(char[] sha1string = null)
 		{
+			assert(state == DATA || state == SEGEND);
+
+			// Skip remaining data if any and get next byte
+			int c = 0;
+			if (state == DATA)
+			{
+				c = dec.skip();
+				decode_state = SKIP;
+			}
+			else if (state == SEGEND)
+				c = dec.get();
+			state = FILENAME;
+
+			// Read checksum
+			if (c == 254)
+			{
+				if (sha1string) sha1string[0] = 0;  // no checksum
+			}
+			else if (c == 253)
+			{
+				if (sha1string) sha1string[0] = 1;
+				for (int i = 1; i <= 20; ++i)
+				{
+					c = dec.get();
+					if (sha1string) sha1string[i] = c;
+				}
+			}
+			else
+				error("missing end of segment marker");
 		}
 
 		public int stat(int x)

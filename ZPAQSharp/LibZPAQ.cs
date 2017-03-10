@@ -65,6 +65,18 @@ namespace ZPAQSharp
 
 		static void decompress(Reader @in, Writer @out)
 		{
+			Decompresser d;
+			d.setInput(in);
+			d.setOutput(out);
+			while (d.findBlock())
+			{       // don't calculate memory
+				while (d.findFilename())
+				{  // discard filename
+					d.readComment();          // discard comment
+					d.decompress();           // to end of segment
+					d.readSegmentEnd();       // discard sha1string
+				}
+			}
 		}
 
 		// Compress in to out in multiple blocks. Default method is "14,128,0"
@@ -72,6 +84,27 @@ namespace ZPAQSharp
 		// dosha1 means save the SHA-1 checksum.
 		static void compress(Reader @in, Writer @out, string method, string filename = null, string comment = null, bool dosha1 = true)
 		{
+			// Get block size
+			int bs = 4;
+			if (method && method[0] && method[1] >= '0' && method[1] <= '9')
+			{
+				bs = method[1] - '0';
+				if (method[2] >= '0' && method[2] <= '9') bs = bs * 10 + method[2] - '0';
+				if (bs > 11) bs = 11;
+			}
+			bs = (0x100000 << bs) - 4096;
+
+			// Compress in blocks
+			StringBuffer sb(bs);
+			sb.write(0, bs);
+			int n = 0;
+			while (in && (n =in->read((char*)sb.data(), bs))> 0) {
+				sb.resize(n);
+				compressBlock(&sb, out, method, filename, comment, dosha1);
+				filename = 0;
+				comment = 0;
+				sb.resize(0);
+			}
 		}
 
 		// Same as compress() but output is 1 block, ignoring block size parameter.
